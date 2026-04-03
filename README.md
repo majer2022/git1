@@ -67,7 +67,7 @@ Works on:
 First, copy and run the server application (`project1`) on a Linux machine.
 
 After starting, it will listen on:
-
+./project1 -p 8080
 
 http://192.168.1.50:8080
 
