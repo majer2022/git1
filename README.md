@@ -39,6 +39,7 @@ The server also provides a simple web interface accessible via:
 
 
 🚀 How to run the system
+
 🖥️ 1. Run the server (Linux)
 
 First, copy and run the server application (project1) on a Linux machine.
@@ -71,6 +72,7 @@ Windows ✔
 Linux ✔
 Android ✔
 any modern web browser ✔
+
 💻 3. Optional Linux client (recommended)
 
 The client is a separate application that extends system functionality by enabling automatic clipboard synchronization.
@@ -82,6 +84,8 @@ The client is a separate application that extends system functionality by enabli
 Before running the client, install xclip:
 
 sudo apt install xclip
+
+
 ▶️ Run the client
 
 Start the clipboard synchronization client with:
