@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <Compiler Value="/root/fpcupdelux4nowy/fpc/bin/x86_64-linux/fpc.sh" Date="1750567981"/>
+  <Params Value="-MObjFPC -Scghi -Cg -O1 -gw3 -gl -l -vewnhibq &apos;-Fi/root/Pulpit/client schowek ver2/lib/x86_64-linux&apos; &apos;-Fu/root/Pulpit/client schowek ver2/&apos; &apos;-FU/root/Pulpit/client schowek ver2/lib/x86_64-linux/&apos; &apos;-FE/root/Pulpit/client schowek ver2/&apos; &apos;-o/root/Pulpit/client schowek ver2/clipboardsynclinux&apos; clipboardsynclinux.lpr"/>
+</CONFIG>
