@@ -64,10 +64,13 @@ Works on:
 
 ## 🖥️ 1. Run the server (Linux)
 
+./project1 -p 8080 
+
+
 First, copy and run the server application (`project1`) on a Linux machine.
 
 After starting, it will listen on:
-./project1 -p 8080
+
 
 http://192.168.1.50:8080
 
@@ -75,6 +78,8 @@ http://192.168.1.50:8080
 👉 Replace `192.168.1.50` with your server machine IP.
 
 ---
+
+
 
 ## 🌐 2. Access via browser (Web UI)
 
