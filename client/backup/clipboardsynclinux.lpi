@@ -57,6 +57,9 @@
       <Item>
         <Name Value="EFOpenError"/>
       </Item>
+      <Item>
+        <Name Value="EPipeSeek"/>
+      </Item>
     </Exceptions>
   </Debugging>
 </CONFIG>

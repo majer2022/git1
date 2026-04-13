@@ -23,7 +23,7 @@ begin
   Writeln('  ./ClipboardSL -a <IP> -p <PORT>');
   Writeln('');
   Writeln('Options:');
-  Writeln('  -a <ip>     Server IP address (default: 192.168.1.212)');
+  Writeln('  -a <ip>     Server IP address (default: 192.168.1.204)');
   Writeln('  -p <port>   Server port (default: 8080)');
   Writeln('  -h          Show this help message');
   Writeln('  --help      Show this help message');
@@ -71,22 +71,29 @@ begin
 end;
 
 
-  procedure SetClipboardText(const AText: string);
+procedure SetClipboardText(const AText: string);
 var
   P: TProcess;
+  S: TStringStream;
 begin
   P := TProcess.Create(nil);
+  S := TStringStream.Create(AText);
   try
     P.Executable := 'xclip';
     P.Parameters.Add('-selection');
     P.Parameters.Add('clipboard');
     P.Parameters.Add('-i');
 
-    P.Options := P.Options + [poUsePipes];
+    // 🔥 ważne: brak pipes → brak zombie
+    P.Options := [poWaitOnExit];
+
     P.Execute;
 
-    P.Input.WriteBuffer(Pointer(AText)^, Length(AText));
+    // NIE używamy P.Input → zamiast tego:
+    S.SaveToStream(P.Input);
+
   finally
+    S.Free;
     P.Free;
   end;
 end;
@@ -139,29 +146,34 @@ end;
 
 function GetClipboardText: string;
 var
-  AProcess: TProcess;
-  Output: TStringList;
+  P: TProcess;
+  Buffer: TStringStream;
+  BytesRead: LongInt;
+  Temp: array[0..1023] of byte;
 begin
   Result := '';
-
-  AProcess := TProcess.Create(nil);
-  Output := TStringList.Create;
+  P := TProcess.Create(nil);
+  Buffer := TStringStream.Create('');
   try
-    AProcess.Executable := 'xclip';
-    AProcess.Parameters.Add('-selection');
-    AProcess.Parameters.Add('clipboard');
-    AProcess.Parameters.Add('-o');
+    P.Executable := 'xclip';
+    P.Parameters.Add('-selection');
+    P.Parameters.Add('clipboard');
+    P.Parameters.Add('-o');
 
-    AProcess.Options := AProcess.Options + [poWaitOnExit, poUsePipes];
+    P.Options := [poUsePipes, poWaitOnExit];
+    P.Execute;
 
-    AProcess.Execute;
+    repeat
+      BytesRead := P.Output.Read(Temp, SizeOf(Temp));
+      if BytesRead > 0 then
+        Buffer.WriteBuffer(Temp, BytesRead);
+    until BytesRead = 0;
 
-    Output.LoadFromStream(AProcess.Output);
-    Result := Trim(Output.Text);
+    Result := Trim(Buffer.DataString);
 
   finally
-    Output.Free;
-    AProcess.Free;
+    Buffer.Free;
+    P.Free;
   end;
 end;
 
@@ -250,7 +262,7 @@ begin
         Writeln('Sync error: ', E.Message);
     end;
 
-    Sleep(500);
+    Sleep(2000);
   end;
 
 end.

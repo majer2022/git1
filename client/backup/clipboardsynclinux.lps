@@ -9,11 +9,13 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="ClipboardSL"/>
         <IsVisibleTab Value="True"/>
-        <UsageCount Value="34"/>
+        <TopLine Value="139"/>
+        <CursorPos X="5" Y="178"/>
+        <UsageCount Value="35"/>
         <Loaded Value="True"/>
       </Unit>
     </Units>
-    <JumpHistory HistoryIndex="4">
+    <JumpHistory HistoryIndex="6">
       <Position>
         <Filename Value="clipboardsynclinux.lpr"/>
         <Caret Line="35" Column="24"/>
@@ -33,6 +35,13 @@
       <Position>
         <Filename Value="clipboardsynclinux.lpr"/>
         <Caret Line="185" TopLine="145"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="160" Column="15" TopLine="134"/>
       </Position>
     </JumpHistory>
     <RunParams>
