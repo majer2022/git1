@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CONFIG>
-  <Compiler Value="/root/fpcupdelux4nowy/fpc/bin/x86_64-linux/fpc.sh" Date="1750567981"/>
-  <Params Value="-MObjFPC -Scghi -Cg -O1 -gw3 -gl -l -vewnhibq &apos;-Fi/root/Pulpit/client schowek ver3/lib/x86_64-linux&apos; &apos;-Fu/root/Pulpit/client schowek ver3/&apos; &apos;-FU/root/Pulpit/client schowek ver3/lib/x86_64-linux/&apos; &apos;-FE/root/Pulpit/client schowek ver3/&apos; &apos;-o/root/Pulpit/client schowek ver3/clipboardsynclinux&apos; clipboardsynclinux.lpr"/>
+  <Compiler Value="/root/fpcupdelux331/fpc/bin/x86_64-linux/fpc.sh" Date="1776284304"/>
+  <Params Value="-MObjFPC -Scghi -Cg -O1 -gw3 -gl -l -vewnhibq -Fi/root/Pulpit/clientschowekver4/lib/x86_64-linux -Fu/root/Pulpit/clientschowekver4/ -FU/root/Pulpit/clientschowekver4/lib/x86_64-linux/ -FE/root/Pulpit/clientschowekver4/ -o/root/Pulpit/clientschowekver4/clipboardsynclinux clipboardsynclinux.lpr"/>
 </CONFIG>

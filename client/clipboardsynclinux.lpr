@@ -5,7 +5,6 @@ program ClipboardSL;
 uses
   Classes, SysUtils, Process, fphttpclient, HTTPDefs;
 
-
 var
   LastText: string = '';
   LastServerText: string = '';
@@ -73,27 +72,32 @@ end;
 
 procedure SetClipboardText(const AText: string);
 var
+  Cmd: string;
+begin
+  // zabezpieczenie dla shella (apostrofy)
+  Cmd := 'printf %s ' + QuotedStr(AText) +
+         ' | xclip -selection clipboard';
+
+  ExecuteProcess('/bin/sh', ['-c', Cmd]);
+end;
+
+
+  procedure SetClipboardTextold(const AText: string);
+var
   P: TProcess;
-  S: TStringStream;
 begin
   P := TProcess.Create(nil);
-  S := TStringStream.Create(AText);
   try
     P.Executable := 'xclip';
     P.Parameters.Add('-selection');
     P.Parameters.Add('clipboard');
     P.Parameters.Add('-i');
 
-    // 🔥 ważne: brak pipes → brak zombie
-    P.Options := [poWaitOnExit];
-
+    P.Options := P.Options + [poUsePipes];
     P.Execute;
 
-    // NIE używamy P.Input → zamiast tego:
-    S.SaveToStream(P.Input);
-
+    P.Input.WriteBuffer(Pointer(AText)^, Length(AText));
   finally
-    S.Free;
     P.Free;
   end;
 end;
@@ -143,37 +147,60 @@ begin
     P.Free;
   end;
 end;
-
-function GetClipboardText: string;
+  function GetClipboardText: string;
 var
-  P: TProcess;
-  Buffer: TStringStream;
-  BytesRead: LongInt;
-  Temp: array[0..1023] of byte;
+  AProcess: TProcess;
+  Output: TStringList;
 begin
   Result := '';
-  P := TProcess.Create(nil);
+
+  AProcess := TProcess.Create(nil);
+  Output := TStringList.Create;
+  try
+    AProcess.Executable := 'xclip';
+    AProcess.Parameters.Add('-selection');
+    AProcess.Parameters.Add('clipboard');
+    AProcess.Parameters.Add('-o');
+
+    AProcess.Options := AProcess.Options + [poWaitOnExit, poUsePipes];
+
+    AProcess.Execute;
+
+    Output.LoadFromStream(AProcess.Output);
+    Result := Trim(Output.Text);
+
+  finally
+    Output.Free;
+    AProcess.Free;
+  end;
+end;
+function GetClipboardTextold: string;
+var
+  AProcess: TProcess;
+  Buffer: TStringStream;
+begin
+  Result := '';
+
+  AProcess := TProcess.Create(nil);
   Buffer := TStringStream.Create('');
   try
-    P.Executable := 'xclip';
-    P.Parameters.Add('-selection');
-    P.Parameters.Add('clipboard');
-    P.Parameters.Add('-o');
+    AProcess.Executable := 'xclip';
+    AProcess.Parameters.Add('-selection');
+    AProcess.Parameters.Add('clipboard');
+    AProcess.Parameters.Add('-o');
 
-    P.Options := [poUsePipes, poWaitOnExit];
-    P.Execute;
+    AProcess.Options := [poWaitOnExit, poUsePipes];
 
-    repeat
-      BytesRead := P.Output.Read(Temp, SizeOf(Temp));
-      if BytesRead > 0 then
-        Buffer.WriteBuffer(Temp, BytesRead);
-    until BytesRead = 0;
+    AProcess.Execute;
+
+    // czytaj ręcznie aż EOF
+    Buffer.CopyFrom(AProcess.Output, AProcess.Output.Size);
 
     Result := Trim(Buffer.DataString);
 
   finally
     Buffer.Free;
-    P.Free;
+    AProcess.Free;
   end;
 end;
 

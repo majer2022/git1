@@ -5,7 +5,6 @@ program ClipboardSL;
 uses
   Classes, SysUtils, Process, fphttpclient, HTTPDefs;
 
-
 var
   LastText: string = '';
   LastServerText: string = '';
@@ -70,30 +69,54 @@ begin
   end;
 end;
 
-
+   
 procedure SetClipboardText(const AText: string);
 var
   P: TProcess;
-  S: TStringStream;
+  Bytes: TBytes;
 begin
   P := TProcess.Create(nil);
-  S := TStringStream.Create(AText);
   try
     P.Executable := 'xclip';
     P.Parameters.Add('-selection');
     P.Parameters.Add('clipboard');
     P.Parameters.Add('-i');
 
-    // 🔥 ważne: brak pipes → brak zombie
-    P.Options := [poWaitOnExit];
+    P.Options := [poUsePipes, poWaitOnExit];
 
     P.Execute;
 
-    // NIE używamy P.Input → zamiast tego:
-    S.SaveToStream(P.Input);
+    Bytes := TEncoding.UTF8.GetBytes(AText);
+
+    if Length(Bytes) > 0 then
+      P.Input.WriteBuffer(Bytes[0], Length(Bytes));
+
+    // 🔥 KLUCZ: zamknięcie stdin (EOF)
+    P.Input.CloseInput;  // jeśli Twoja wersja FPC to wspiera
+
+    P.WaitOnExit;
 
   finally
-    S.Free;
+    P.Free;
+  end;
+end;
+
+  procedure SetClipboardTextold(const AText: string);
+var
+  P: TProcess;
+begin
+  P := TProcess.Create(nil);
+  try
+    P.Executable := 'xclip';
+    P.Parameters.Add('-selection');
+    P.Parameters.Add('clipboard');
+    P.Parameters.Add('-i');
+
+    P.Options := P.Options + [poUsePipes];
+    P.Execute;
+
+    P.Input.WriteBuffer(Pointer(AText)^, Length(AText));
+  finally
     P.Free;
   end;
 end;
@@ -143,8 +166,34 @@ begin
     P.Free;
   end;
 end;
+  function GetClipboardText: string;
+var
+  AProcess: TProcess;
+  Output: TStringList;
+begin
+  Result := '';
 
-function GetClipboardText: string;
+  AProcess := TProcess.Create(nil);
+  Output := TStringList.Create;
+  try
+    AProcess.Executable := 'xclip';
+    AProcess.Parameters.Add('-selection');
+    AProcess.Parameters.Add('clipboard');
+    AProcess.Parameters.Add('-o');
+
+    AProcess.Options := AProcess.Options + [poWaitOnExit, poUsePipes];
+
+    AProcess.Execute;
+
+    Output.LoadFromStream(AProcess.Output);
+    Result := Trim(Output.Text);
+
+  finally
+    Output.Free;
+    AProcess.Free;
+  end;
+end;
+function GetClipboardTextold: string;
 var
   AProcess: TProcess;
   Buffer: TStringStream;
