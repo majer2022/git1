@@ -69,37 +69,37 @@ begin
   end;
 end;
 
-   
 procedure SetClipboardText(const AText: string);
 var
   P: TProcess;
-  Bytes: TBytes;
 begin
   P := TProcess.Create(nil);
   try
-    P.Executable := 'xclip';
-    P.Parameters.Add('-selection');
-    P.Parameters.Add('clipboard');
-    P.Parameters.Add('-i');
+    P.Executable := '/bin/bash';
+    P.Parameters.Add('-c');
+    P.Parameters.Add('printf %s "$1" | xclip -selection clipboard');
+    P.Parameters.Add('--');
+    P.Parameters.Add(AText);
 
-    P.Options := [poUsePipes, poWaitOnExit];
-
+    P.Options := [poWaitOnExit];
     P.Execute;
-
-    Bytes := TEncoding.UTF8.GetBytes(AText);
-
-    if Length(Bytes) > 0 then
-      P.Input.WriteBuffer(Bytes[0], Length(Bytes));
-
-    // 🔥 KLUCZ: zamknięcie stdin (EOF)
-    P.Input.CloseInput;  // jeśli Twoja wersja FPC to wspiera
-
-    P.WaitOnExit;
-
   finally
     P.Free;
   end;
 end;
+
+
+procedure SetClipboardTextold(const AText: string);
+var
+  Cmd: string;
+begin
+  // zabezpieczenie dla shella (apostrofy)
+  Cmd := 'printf %s ' + QuotedStr(AText) +
+         ' | xclip -selection clipboard';
+
+  ExecuteProcess('/bin/sh', ['-c', Cmd]);
+end;
+
 
   procedure SetClipboardTextold(const AText: string);
 var

@@ -69,8 +69,27 @@ begin
   end;
 end;
 
-
 procedure SetClipboardText(const AText: string);
+var
+  P: TProcess;
+begin
+  P := TProcess.Create(nil);
+  try
+    P.Executable := '/bin/bash';
+    P.Parameters.Add('-c');
+    P.Parameters.Add('printf %s "$1" | xclip -selection clipboard');
+    P.Parameters.Add('--');
+    P.Parameters.Add(AText);
+
+    P.Options := [poWaitOnExit];
+    P.Execute;
+  finally
+    P.Free;
+  end;
+end;
+
+
+procedure SetClipboardTextold1(const AText: string);
 var
   Cmd: string;
 begin

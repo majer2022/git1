@@ -11,8 +11,8 @@
         <Loaded Value="True"/>
         <UsageCount Value="36"/>
         <IsVisibleTab Value="True"/>
-        <TopLine Value="70"/>
-        <CursorPos Y="72"/>
+        <TopLine Value="78"/>
+        <CursorPos X="31" Y="92"/>
       </Unit>
     </Units>
     <JumpHistory HistoryIndex="13">
@@ -69,7 +69,7 @@
       </Position>
       <Position>
         <Filename Value="clipboardsynclinux.lpr"/>
-        <Caret Line="73" TopLine="77"/>
+        <Caret Line="90" TopLine="57"/>
       </Position>
     </JumpHistory>
     <RunParams>
