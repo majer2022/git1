@@ -1,264 +1,274 @@
-program project1;
+program clipboard_server;
 
 {$mode objfpc}{$H+}
 
 uses
-  {$IFDEF UNIX}
-  cthreads,
-  {$ENDIF}
-  Classes, SysUtils, CustApp, fphttpserver, httpdefs, fphttpapp;
+  {$IFDEF UNIX} cthreads {$ENDIF},
+  Classes, SysUtils, CustApp, fphttpserver, httpdefs, SyncObjs;
 
 type
   TMyApplication = class(TCustomApplication)
   private
-    function GetPortFromArgs: Word;
+    FHTTPServer: TFPHTTPServer;
+    FLock      : TCriticalSection;
+    FS         : string;
+    function  GetPortFromArgs: Word;
     procedure HandleRequest(Sender: TObject;
-      var ARequest: TFPHTTPConnectionRequest;
+      var ARequest : TFPHTTPConnectionRequest;
       var AResponse: TFPHTTPConnectionResponse);
   protected
     procedure DoRun; override;
   end;
 
-var
-  HTTPServer: TFPHTTPServer;
-  s: string;
-
-
-  function TMyApplication.GetPortFromArgs: Word;
-var
-  i: Integer;
+function EscapeHTML(const S: string): string;
 begin
-  Result := 8080; // default
-
-  for i := 1 to ParamCount do
-  begin
-    if (ParamStr(i) = '-p') and (i < ParamCount) then
-      Result := StrToIntDef(ParamStr(i + 1), 8080);
-  end;
+  Result := StringReplace(S,      '&', '&amp;',  [rfReplaceAll]);
+  Result := StringReplace(Result, '<', '&lt;',   [rfReplaceAll]);
+  Result := StringReplace(Result, '>', '&gt;',   [rfReplaceAll]);
+  Result := StringReplace(Result, '"', '&quot;', [rfReplaceAll]);
+  Result := StringReplace(Result, #10, '<br>',   [rfReplaceAll]);
+  Result := StringReplace(Result, #13, '',        [rfReplaceAll]);
 end;
-
-
-{ TMyApplication }
 
 procedure TMyApplication.HandleRequest(Sender: TObject;
-  var ARequest: TFPHTTPConnectionRequest;
+  var ARequest : TFPHTTPConnectionRequest;
   var AResponse: TFPHTTPConnectionResponse);
-
-function EscapeHTML(const str: string): string;
-begin
-  Result := StringReplace(str, '&', '&amp;', [rfReplaceAll]);
-  Result := StringReplace(Result, '<', '&lt;', [rfReplaceAll]);
-  Result := StringReplace(Result, '>', '&gt;', [rfReplaceAll]);
-end;
-
 var
-  inputText: string;
-  safeText: string;
-
+  InputText: string;
+  SafeText : string;
 begin
+  try
+    WriteLn('[', FormatDateTime('hh:nn:ss', Now), '] ',
+      ARequest.Method, ' ', ARequest.URI,
+      ' [', ARequest.RemoteAddr, ']');
 
-
-
-
-  // =========================
-  // 🔥 API ENDPOINT
-  // =========================
-  if Pos('/api', ARequest.URI) = 1 then
-  begin
-    if ARequest.Method = 'GET' then
+    // ── OPTIONS (CORS preflight) ─────────────────────
+    if ARequest.Method = 'OPTIONS' then
     begin
-      AResponse.Content := s;
+      AResponse.Code := 204;
+      AResponse.CustomHeaders.Values['Access-Control-Allow-Origin']  := '*';
+      AResponse.CustomHeaders.Values['Access-Control-Allow-Methods'] := 'GET, POST, OPTIONS';
+      AResponse.CustomHeaders.Values['Access-Control-Allow-Headers'] := 'Content-Type';
+      Exit;
+    end;
+
+    AResponse.CustomHeaders.Values['Access-Control-Allow-Origin'] := '*';
+
+    // ── POST /api/push → klient wysyła swój schowek ──────────────────
+    if (ARequest.Method = 'POST') and (ARequest.URI = '/api/push') then
+    begin
+      InputText := ARequest.ContentFields.Values['data'];
+      if InputText <> '' then
+      begin
+        FLock.Enter;
+        FS := InputText;
+        FLock.Leave;
+        WriteLn('  [PUSH] "', Copy(InputText, 1, 80), '"');
+      end;
+      AResponse.Code        := 200;
+      AResponse.Content     := 'OK';
       AResponse.ContentType := 'text/plain';
       Exit;
     end;
 
-    if ARequest.Method = 'POST' then
+    // ── GET /api/pull → klient pobiera aktualny string ───────────────
+    if (ARequest.Method = 'GET') and (ARequest.URI = '/api/pull') then
     begin
-      inputText := ARequest.ContentFields.Values['data'];
+      FLock.Enter;
+      AResponse.Content := FS;
+      FLock.Leave;
+      AResponse.Code        := 200;
+      AResponse.ContentType := 'text/plain; charset=utf-8';
+      Exit;
+    end;
 
-      if inputText <> '' then
+    // ── GET /api → zwróć s (stary endpoint, dla kompatybilności) ─────
+    if (ARequest.Method = 'GET') and (Pos('/api', ARequest.URI) = 1) then
+    begin
+      FLock.Enter;
+      AResponse.Content := FS;
+      FLock.Leave;
+      AResponse.Code        := 200;
+      AResponse.ContentType := 'text/plain; charset=utf-8';
+      Exit;
+    end;
+
+    // ── POST /api → zapisz s (stary endpoint, dla kompatybilności) ───
+    if (ARequest.Method = 'POST') and (Pos('/api', ARequest.URI) = 1) then
+    begin
+      InputText := ARequest.ContentFields.Values['data'];
+      if InputText <> '' then
       begin
-        s := inputText;
+        FLock.Enter;
+        FS := InputText;
+        FLock.Leave;
+        WriteLn('  [POST/api] "', Copy(InputText, 1, 60), '"');
       end;
-
-      AResponse.Content := 'OK';
+      AResponse.Code        := 200;
+      AResponse.Content     := 'OK';
       AResponse.ContentType := 'text/plain';
       Exit;
+    end;
+
+    // ── GET / → strona WWW ───────────────────────────
+    if (ARequest.Method = 'GET') and
+       ((ARequest.URI = '/') or (ARequest.URI = '')) then
+    begin
+      FLock.Enter;
+      SafeText := EscapeHTML(FS);
+      FLock.Leave;
+
+      AResponse.Code        := 200;
+      AResponse.ContentType := 'text/html; charset=utf-8';
+      AResponse.CustomHeaders.Values['Content-Type'] := 'text/html; charset=utf-8';
+      AResponse.Content :=
+        '<!DOCTYPE html>' +
+        '<html><head>' +
+        '<meta charset="utf-8">' +
+        '<meta name="viewport" content="width=device-width,initial-scale=1.0">' +
+        '<title>Pascal Server</title>' +
+        '<style>' +
+        '*{box-sizing:border-box;margin:0;padding:0}' +
+        'body{background:linear-gradient(135deg,#0b0f14,#0f1720);color:#eaeaea;' +
+        'font-family:system-ui,-apple-system,Segoe UI,Roboto,monospace;' +
+        'height:100vh;display:flex;flex-direction:column;overflow:hidden}' +
+        '.container{display:flex;flex:1;overflow:hidden}' +
+        '.pane{width:50%;display:flex;flex-direction:column;overflow:hidden}' +
+        '.pane:first-child{border-right:1px solid rgba(255,255,255,0.08)}' +
+        '.topbar{display:flex;align-items:center;justify-content:space-between;' +
+        'padding:10px 14px;background:rgba(10,12,18,0.95);' +
+        'border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0}' +
+        '.topbar span{font-size:13px;opacity:0.7;letter-spacing:.5px}' +
+        'button{background:linear-gradient(135deg,#2b6cff,#1e40af);color:#fff;' +
+        'border:none;padding:8px 16px;border-radius:8px;cursor:pointer;' +
+        'font-family:inherit;font-weight:600;font-size:13px;transition:all .15s ease}' +
+        'button:active{transform:scale(0.94);opacity:0.8}' +
+        'button.copied{background:linear-gradient(135deg,#16a34a,#15803d)}' +
+        '#display{flex:1;overflow:auto;padding:16px;white-space:pre-wrap;' +
+        'word-break:break-word;font-size:14px;line-height:1.6}' +
+        'textarea{flex:1;background:transparent;color:#eaeaea;border:none;' +
+        'padding:16px;font-size:14px;font-family:monospace;resize:none;outline:none;line-height:1.6}' +
+        '</style></head><body>' +
+        '<div class="container">' +
+        '<div class="pane">' +
+        '<div class="topbar">' +
+        '<span>Schowek serwera</span>' +
+        '<button id="copyBtn" onclick="copyText()">Kopiuj</button>' +
+        '</div>' +
+        '<div id="display">' + SafeText + '</div>' +
+        '</div>' +
+        '<div class="pane">' +
+        '<div class="topbar"><span>Wpisz / wklej</span></div>' +
+        '<textarea id="inputBox" placeholder="Wpisz tekst..."></textarea>' +
+        '</div>' +
+        '</div>' +
+        '<script>' +
+        'var display  = document.getElementById("display");' +
+        'var inputBox = document.getElementById("inputBox");' +
+        'var copyBtn  = document.getElementById("copyBtn");' +
+        'var lastData = "";' +
+        'var sendTimer = null;' +
+        'function sendData(text){' +
+        '  fetch("/api/push",{method:"POST",' +
+        '    headers:{"Content-Type":"application/x-www-form-urlencoded"},' +
+        '    body:"data="+encodeURIComponent(text)});' +
+        '}' +
+        'inputBox.addEventListener("input",function(){' +
+        '  clearTimeout(sendTimer);' +
+        '  sendTimer = setTimeout(function(){ sendData(inputBox.value); }, 400);' +
+        '});' +
+        'function copyText(){' +
+        '  var text = display.innerText;' +
+        '  if(navigator.clipboard){' +
+        '    navigator.clipboard.writeText(text).catch(fallbackCopy);' +
+        '  } else { fallbackCopy(); }' +
+        '  copyBtn.textContent = "Skopiowano!";' +
+        '  copyBtn.classList.add("copied");' +
+        '  setTimeout(function(){ copyBtn.textContent="Kopiuj"; copyBtn.classList.remove("copied"); }, 1500);' +
+        '}' +
+        'function fallbackCopy(){' +
+        '  var r = document.createRange();' +
+        '  r.selectNodeContents(display);' +
+        '  var s = window.getSelection();' +
+        '  s.removeAllRanges(); s.addRange(r);' +
+        '  document.execCommand("copy");' +
+        '  s.removeAllRanges();' +
+        '}' +
+        'function poll(){' +
+        '  fetch("/api/pull").then(function(r){ return r.text(); })' +
+        '    .then(function(t){' +
+        '      if(t !== lastData){ lastData = t; display.innerText = t; }' +
+        '    }).catch(function(){});' +
+        '}' +
+        'setInterval(poll, 1200); poll();' +
+        '</script>' +
+        '</body></html>';
+      Exit;
+    end;
+
+    // ── 404 ──────────────────────────────────────────
+    AResponse.Code        := 404;
+    AResponse.Content     := 'Not found';
+    AResponse.ContentType := 'text/plain';
+
+  except
+    on E: Exception do
+    begin
+      WriteLn('ERROR: ', E.Message);
+      try
+        AResponse.Code        := 500;
+        AResponse.Content     := 'Internal error';
+        AResponse.ContentType := 'text/plain';
+      except end;
     end;
   end;
-
-  // =========================
-  // 🌐 WEB UI
-  // =========================
-  safeText := EscapeHTML(s);
-
-  AResponse.Content :=
-    <!DOCTYPE html> +
-    <html> +
-    <head> +
-    <meta charset="utf-8"> +
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"> +
-    <title>Pascal Server</title> +
-
-    <style> +
-    body { +
-     margin:0; +
-     background: linear-gradient(135deg,#0b0f14,#0f1720); +
-     color:#eaeaea; +
-     font-family: system-ui, -apple-system, Segoe UI, Roboto, monospace; +
-    } +
-
-    .container { +
-     display:flex; +
-     height:100vh; +
-    } +
-
-    .left { +
-     width:50%; +
-     padding:20px; +
-     border-right:1px solid rgba(255,255,255,0.08); +
-     overflow:auto; +
-    } +
-
-    .right { +
-     width:50%; +
-     padding:0; +
-    } +
-
-    .panel { +
-     background: rgba(255,255,255,0.04); +
-     border: 1px solid rgba(255,255,255,0.08); +
-     border-radius: 12px; +
-     overflow: hidden; +
-     box-shadow: 0 10px 30px rgba(0,0,0,0.4); +
-     display:flex; +
-     flex-direction:column; +
-     height:100%; +
-    } +
-
-    .topbar { +
-     display:flex; +
-     align-items:center; +
-     justify-content:space-between; +
-     padding:12px; +
-     background: rgba(10,12,18,0.9); +
-     backdrop-filter: blur(10px); +
-     border-bottom:1px solid rgba(255,255,255,0.08); +
-    } +
-
-    #display { +
-     padding:16px; +
-     white-space:pre-wrap; +
-     flex:1; +
-     overflow:auto; +
-    } +
-
-    textarea { +
-     width:100%; +
-     height:100%; +
-     background: transparent; +
-     color:#eaeaea; +
-     border:none; +
-     padding:20px; +
-     font-size:15px; +
-     font-family: monospace; +
-     resize:none; +
-     outline:none; +
-    } +
-
-    button { +
-     background: linear-gradient(135deg,#2b6cff,#1e40af); +
-     color:#fff; +
-     border:none; +
-     padding:10px 18px; +
-     border-radius:10px; +
-     cursor:pointer; +
-     font-family:inherit; +
-     font-weight:600; +
-     font-size:14px; +
-    } +
-
-    </style> +
-    </head> +
-
-    <body> +
-
-    <div class="container"> +
-     <div class="left"> +
-       <div class="panel"> +
-         <div class="topbar"> +
-           <span>📄 Paste</span> +
-           <button id="copyBtn">Copy</button> +
-         </div> +
-         <div id="display"> + safeText + </div> +
-       </div> +
-     </div> +
-
-     <div class="right"> +
-       <div class="panel"> +
-         <textarea id="inputBox" placeholder="Write text..."></textarea> +
-       </div> +
-     </div> +
-    </div> +
-
-    <script> +
-    const textarea=document.getElementById("inputBox"); +
-    const display=document.getElementById("display"); +
-    const copyBtn=document.getElementById("copyBtn"); +
-
-    function sendData(){ +
-    fetch("/api",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"data="+encodeURIComponent(textarea.value)}) +
-    .then(()=>display.innerText=textarea.value); +
-    } +
-
-    textarea.addEventListener("input",()=>setTimeout(sendData,400)); +
-
-    setInterval(()=>{ +
-    fetch("/api").then(r=>r.text()).then(t=>display.innerText=t); +
-    },1000); +
-
-    </script> +
-
-    </body> +
-    </html>;
-
-    AResponse.ContentType := text/html;
-
-  AResponse.ContentType := 'text/html';
 end;
 
 procedure TMyApplication.DoRun;
 var
   Port: Word;
 begin
-    Port := GetPortFromArgs; // 👈 ONLY CHANGE USED
+  Port  := GetPortFromArgs;
+  FLock := TCriticalSection.Create;
+  FS    := 'Hello, world!';
 
-  Writeln('Server running on http://localhost:' + IntToStr(Port));
-  Writeln('Use -p <port> to change port');
+  WriteLn('Clipboard Server — http://0.0.0.0:', Port);
+  WriteLn('  GET  /api/pull  → zwraca aktualny schowek');
+  WriteLn('  POST /api/push  → zapisuje schowek (form: data=...)');
+  WriteLn('  GET  /          → strona WWW');
 
+  FHTTPServer           := TFPHTTPServer.Create(nil);
+  FHTTPServer.Port      := Port;
+  FHTTPServer.OnRequest := @HandleRequest;
+  FHTTPServer.Active    := True;
 
-
-  HTTPServer := TFPHTTPServer.Create(nil);
-  HTTPServer.Port := Port;
-  HTTPServer.OnRequest := @HandleRequest;
-
-  s := 'Hello, world!';
-
-  HTTPServer.Active := True;
-
-
-
+  WriteLn('Nacisnij ENTER aby zatrzymac...');
   ReadLn;
 
-  HTTPServer.Free;
+  FHTTPServer.Active := False;
+  FreeAndNil(FHTTPServer);
+  FreeAndNil(FLock);
   Terminate;
 end;
 
+function TMyApplication.GetPortFromArgs: Word;
 var
-  Application: TMyApplication;
-
+  i: Integer;
 begin
-  Application := TMyApplication.Create(nil);
-  Application.Run;
-  Application.Free;
+  Result := 8080;
+  for i := 1 to ParamCount do
+    if (ParamStr(i) = '-p') and (i < ParamCount) then
+      Result := Word(StrToIntDef(ParamStr(i + 1), 8080));
+end;
+
+var
+  App: TMyApplication;
+begin
+  App := TMyApplication.Create(nil);
+  try
+    App.Run;
+  finally
+    App.Free;
+  end;
 end.
+

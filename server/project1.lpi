@@ -26,6 +26,7 @@
       <Unit>
         <Filename Value="project1.lpr"/>
         <IsPartOfProject Value="True"/>
+        <UnitName Value="clipboard_server"/>
       </Unit>
     </Units>
   </ProjectOptions>

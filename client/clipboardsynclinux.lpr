@@ -3,314 +3,238 @@ program ClipboardSL;
 {$mode objfpc}{$H+}
 
 uses
-  Classes, SysUtils, Process, fphttpclient, HTTPDefs;
+  Classes,
+  SysUtils,
+  Process,
+  fphttpclient,
+  HTTPDefs;
 
 var
-  LastText: string = '';
-  LastServerText: string = '';
-  Text: string;
-  ServerText:string;
-  ServerIP: string = '192.168.1.204';
-  ServerPort: string = '8080';
-  SERVER_URL: string;
+  SERVER_URL : string;
+  ServerIP   : string = '192.168.1.212';
+  ServerPort : string = '8080';
 
- procedure ShowHelp;
-begin
-  Writeln('ClipboardSyncLinux - LAN clipboard sync tool');
-  Writeln('');
-  Writeln('Usage:');
-  Writeln('  ./ClipboardSL -a <IP> -p <PORT>');
-  Writeln('');
-  Writeln('Options:');
-  Writeln('  -a <ip>     Server IP address (default: 192.168.1.204)');
-  Writeln('  -p <port>   Server port (default: 8080)');
-  Writeln('  -h          Show this help message');
-  Writeln('  --help      Show this help message');
-  Writeln('');
-  Writeln('Examples:');
-  Writeln('  ./ClipboardSL');
-  Writeln('  ./ClipboardSL -a 192.168.1.50');
-  Writeln('  ./ClipboardSL -a 192.168.1.50 -p 9000');
-  Writeln('');
-end;
-
-procedure ParseArgs;
-var
-  i: Integer;
-begin
-  i := 1;
-  while i <= ParamCount do
+  procedure Log(const Msg: string); inline;
   begin
-    if (ParamStr(i) = '-h') or (ParamStr(i) = '--help') then
-    begin
-      ShowHelp;
-      Halt;
-    end
+    WriteLn('[', FormatDateTime('hh:nn:ss.zzz', Now), '] ', Msg);
+    Flush(Output);
+  end;
 
-    else if ParamStr(i) = '-a' then
-    begin
-      if i < ParamCount then
-      begin
-        ServerIP := ParamStr(i + 1);
-        Inc(i);
-      end;
-    end
+  procedure ShowHelp;
+  begin
+    WriteLn('ClipboardSL -- clipboard sync over LAN');
+    WriteLn('');
+    WriteLn('Usage:  ./ClipboardSL -a <IP> -p <PORT>');
+    WriteLn('  -a <ip>    server address (default: 192.168.1.204)');
+    WriteLn('  -p <port>  server port    (default: 8080)');
+    WriteLn('  -h         show this help');
+  end;
 
-    else if ParamStr(i) = '-p' then
+  procedure ParseArgs;
+  var
+    i: Integer;
+  begin
+    i := 1;
+    while i <= ParamCount do
     begin
-      if i < ParamCount then
-      begin
-        ServerPort := ParamStr(i + 1);
-        Inc(i);
-      end;
+      if (ParamStr(i) = '-h') or (ParamStr(i) = '--help') then
+        begin ShowHelp; Halt; end
+      else if (ParamStr(i) = '-a') and (i < ParamCount) then
+        begin ServerIP := ParamStr(i+1); Inc(i); end
+      else if (ParamStr(i) = '-p') and (i < ParamCount) then
+        begin ServerPort := ParamStr(i+1); Inc(i); end;
+      Inc(i);
     end;
-
-    Inc(i);
   end;
-end;
 
-procedure SetClipboardText(const AText: string);
-var
-  P: TProcess;
-begin
-  P := TProcess.Create(nil);
-  try
-    P.Executable := '/bin/bash';
-    P.Parameters.Add('-c');
-    P.Parameters.Add('printf %s "$1" | xclip -selection clipboard');
-    P.Parameters.Add('--');
-    P.Parameters.Add(AText);
-
-    P.Options := [poWaitOnExit];
-    P.Execute;
-  finally
-    P.Free;
-  end;
-end;
-
-
-procedure SetClipboardTextold1(const AText: string);
-var
-  Cmd: string;
-begin
-  // zabezpieczenie dla shella (apostrofy)
-  Cmd := 'printf %s ' + QuotedStr(AText) +
-         ' | xclip -selection clipboard';
-
-  ExecuteProcess('/bin/sh', ['-c', Cmd]);
-end;
-
-
-  procedure SetClipboardTextold(const AText: string);
-var
-  P: TProcess;
-begin
-  P := TProcess.Create(nil);
-  try
-    P.Executable := 'xclip';
-    P.Parameters.Add('-selection');
-    P.Parameters.Add('clipboard');
-    P.Parameters.Add('-i');
-
-    P.Options := P.Options + [poUsePipes];
-    P.Execute;
-
-    P.Input.WriteBuffer(Pointer(AText)^, Length(AText));
-  finally
-    P.Free;
-  end;
-end;
-
-
-  function GetFromServer: string;
-var
-  Client: TFPHTTPClient;
-  Response: TStringStream;
-begin
-  Result := '';
-
-  Client := TFPHTTPClient.Create(nil);
-  Response := TStringStream.Create('');
-  try
+  function GetClipboardText: string;
+  var
+    P: TProcess;
+    SL: TStringList;
+    T: QWord;
+  begin
+    Result := '';
+    P := TProcess.Create(nil);
+    SL := TStringList.Create;
     try
-      Client.Get(SERVER_URL, Response);
-      Result := Trim(Response.DataString);
-    except
-      on E: Exception do
-        Writeln('GET error: ', E.Message);
+      P.Executable := 'xclip';
+      P.Parameters.Add('-selection');
+      P.Parameters.Add('clipboard');
+      P.Parameters.Add('-o');
+      P.Options := [poUsePipes, poStderrToOutPut];
+      try
+        P.Execute;
+      except
+        on E: Exception do begin Log('GET xclip failed: ' + E.Message); Exit; end;
+      end;
+      T := GetTickCount64;
+      while P.Running do
+      begin
+        if GetTickCount64 - T > 2000 then
+        begin
+          P.Terminate(0);
+          Log('GET xclip timeout');
+          Exit;
+        end;
+        Sleep(10);
+      end;
+      if P.ExitCode <> 0 then
+      begin
+        SL.LoadFromStream(P.Output);
+        Log('GET xclip exit=' + IntToStr(P.ExitCode) + ' msg="' + Trim(SL.Text) + '"');
+        Exit;
+      end;
+      SL.LoadFromStream(P.Output);
+      Result := Trim(SL.Text);
+    finally
+      SL.Free;
+      P.Free;
     end;
-  finally
-    Response.Free;
-    Client.Free;
   end;
-end;
 
+  procedure SetClipboardText(const AText: string);
+  var
+    P: TProcess;
+  begin
+    P := TProcess.Create(nil);
+    try
+      P.Executable := '/bin/bash';
+      P.Parameters.Add('-c');
+      P.Parameters.Add('printf %s "$1" | xclip -selection clipboard');
+      P.Parameters.Add('--');
+      P.Parameters.Add(AText);
+      P.Options := [poWaitOnExit];
+      P.Execute;
+    finally
+      P.Free;
+    end;
+  end;
 
-function IsXclipAvailable: Boolean;
+  function HttpGet(const URL: string): string;
+  var
+    C: TFPHTTPClient;
+    R: TStringStream;
+  begin
+    Result := '';
+    C := TFPHTTPClient.Create(nil);
+    R := TStringStream.Create('');
+    try
+      C.ConnectTimeout := 3000;
+      try
+        C.Get(URL, R);
+        Result := Trim(R.DataString);
+      except
+        on E: Exception do Log('HTTP GET: ' + E.Message);
+      end;
+    finally
+      R.Free;
+      C.Free;
+    end;
+  end;
+
+  procedure HttpPost(const URL, Body: string);
+  var
+    C: TFPHTTPClient;
+    Req, Res: TStringStream;
+  begin
+    C := TFPHTTPClient.Create(nil);
+    Req := TStringStream.Create(Body, TEncoding.UTF8);
+    Res := TStringStream.Create('');
+    try
+      C.ConnectTimeout := 3000;
+      C.AddHeader('Content-Type', 'application/x-www-form-urlencoded; charset=utf-8');
+      Req.Position := 0;
+      C.RequestBody := Req;
+      try
+        C.Post(URL, Res);
+      except
+        on E: Exception do Log('HTTP POST: ' + E.Message);
+      end;
+    finally
+      Res.Free;
+      Req.Free;
+      C.Free;
+    end;
+  end;
+
 var
+  ClientID, TextzPC, ServerText, LastSetByUs: string;
   P: TProcess;
-begin
-  Result := False;
+  SL: TStringList;
+  O: string;
 
+begin
+  // -- Check xclip -----------------------------------------------------------
   P := TProcess.Create(nil);
+  SL := TStringList.Create;
   try
     P.Executable := 'which';
     P.Parameters.Add('xclip');
-
-    P.Options := P.Options + [poWaitOnExit, poUsePipes];
+    P.Options := [poUsePipes, poWaitOnExit];
     P.Execute;
-
-    Result := P.ExitStatus = 0;
-
+    SL.LoadFromStream(P.Output);
+    O := Trim(SL.Text);
   finally
+    SL.Free;
     P.Free;
   end;
-end;
-  function GetClipboardText: string;
-var
-  AProcess: TProcess;
-  Output: TStringList;
-begin
-  Result := '';
-
-  AProcess := TProcess.Create(nil);
-  Output := TStringList.Create;
-  try
-    AProcess.Executable := 'xclip';
-    AProcess.Parameters.Add('-selection');
-    AProcess.Parameters.Add('clipboard');
-    AProcess.Parameters.Add('-o');
-
-    AProcess.Options := AProcess.Options + [poWaitOnExit, poUsePipes];
-
-    AProcess.Execute;
-
-    Output.LoadFromStream(AProcess.Output);
-    Result := Trim(Output.Text);
-
-  finally
-    Output.Free;
-    AProcess.Free;
-  end;
-end;
-function GetClipboardTextold: string;
-var
-  AProcess: TProcess;
-  Buffer: TStringStream;
-begin
-  Result := '';
-
-  AProcess := TProcess.Create(nil);
-  Buffer := TStringStream.Create('');
-  try
-    AProcess.Executable := 'xclip';
-    AProcess.Parameters.Add('-selection');
-    AProcess.Parameters.Add('clipboard');
-    AProcess.Parameters.Add('-o');
-
-    AProcess.Options := [poWaitOnExit, poUsePipes];
-
-    AProcess.Execute;
-
-    // czytaj ręcznie aż EOF
-    Buffer.CopyFrom(AProcess.Output, AProcess.Output.Size);
-
-    Result := Trim(Buffer.DataString);
-
-  finally
-    Buffer.Free;
-    AProcess.Free;
-  end;
-end;
-
-procedure SendToServer(const Text: string);
-var
-  Client: TFPHTTPClient;
-  Response: TStringStream;
-  Body: string;
-begin
-  Client := TFPHTTPClient.Create(nil);
-  Response := TStringStream.Create('');
-  try
-    Body := 'data=' + HTTPEncode(Text);
-
-    Client.AddHeader('Content-Type', 'application/x-www-form-urlencoded; charset=utf-8');
-    Client.RequestBody := TStringStream.Create(Body, TEncoding.UTF8);
-
-    Client.Post(SERVER_URL, Response);
-
-    Writeln('Wysłano OK: ', Length(Text), ' znaków');
-
-  except
-    on E: Exception do
-      Writeln('HTTP error: ', E.Message);
-  end;
-
-  Client.Free;
-end;
-
-begin
-  Writeln('Clipboard sync Linux started...');
-
-  // 🔥 CHECK xclip BEFORE START
-  if not IsXclipAvailable then
+  if O = '' then
   begin
-    Writeln('❌ You must install xclip first!');
-    Writeln('👉 sudo apt install xclip');
-    Writeln('');
-    Writeln('Press ENTER to exit...');
-    ReadLn;
-    Halt;
+    WriteLn('ERROR: xclip not found -- install with: sudo apt install xclip');
+    Halt(1);
   end;
 
-  Writeln('✅ xclip detected. Running sync...');
+  // -- Parse args ------------------------------------------------------------
+  ParseArgs;
+  SERVER_URL := 'http://' + ServerIP + ':' + ServerPort;
 
-   ParseArgs;
-  SERVER_URL := 'http://' + ServerIP + ':' + ServerPort + '/api';
+  // -- Hostname --------------------------------------------------------------
+  P := TProcess.Create(nil);
+  SL := TStringList.Create;
+  try
+    P.Executable := 'hostname';
+    P.Options := [poUsePipes, poWaitOnExit];
+    P.Execute;
+    SL.LoadFromStream(P.Output);
+    ClientID := Trim(SL.Text);
+  finally
+    SL.Free;
+    P.Free;
+  end;
+  if ClientID = '' then ClientID := 'unknown';
 
-  Writeln('Target server: ', SERVER_URL);
+  LastSetByUs := '';
 
+  Log('START | client="' + ClientID + '" | server="' + SERVER_URL + '"');
 
-
+  // ——— MAIN LOOP ——————————————————————————————————————————————————————————
   while True do
   begin
     try
-      // =========================
-      // LOCAL → SERVER
-      // =========================
-      Text := GetClipboardText;
 
-      if (Text <> '') and (Text <> LastText) then
+      // 1. PULL — if server has something new, write it to local clipboard
+      ServerText := HttpGet(SERVER_URL + '/api/pull');
+      if (ServerText <> '') and (ServerText <> LastSetByUs) then
       begin
-        LastText := Text;
-        SendToServer(Text);
+        Log('PULL: "' + Copy(ServerText, 1, 60) + '"');
+        SetClipboardText(ServerText);
+        LastSetByUs := ServerText;
       end;
 
-      // =========================
-      // SERVER → LOCAL
-      // =========================
-      ServerText := GetFromServer;
-
-      if (ServerText <> '') and (ServerText <> LastServerText) then
+      // 2. PUSH — if user changed clipboard (not us), send to server
+      TextzPC := GetClipboardText;
+      if TextzPC <> LastSetByUs then
       begin
-        LastServerText := ServerText;
-
-        // avoid loop reflection
-        if ServerText <> Text then
-        begin
-          SetClipboardText(ServerText);
-          LastText := ServerText;
-        end;
+        Log('PUSH: "' + Copy(TextzPC, 1, 60) + '"');
+        HttpPost(SERVER_URL + '/api/push', 'data=' + HTTPEncode(TextzPC));
+        LastSetByUs := TextzPC;
       end;
 
     except
-      on E: Exception do
-        Writeln('Sync error: ', E.Message);
+      on E: Exception do Log('EX: ' + E.Message);
     end;
 
-    Sleep(2000);
+    Sleep(800);
   end;
 
 end.
-
-

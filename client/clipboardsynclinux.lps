@@ -9,36 +9,12 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="ClipboardSL"/>
         <Loaded Value="True"/>
-        <UsageCount Value="36"/>
+        <UsageCount Value="44"/>
         <IsVisibleTab Value="True"/>
-        <TopLine Value="78"/>
-        <CursorPos X="31" Y="92"/>
+        <CursorPos X="127" Y="19"/>
       </Unit>
     </Units>
-    <JumpHistory HistoryIndex="13">
-      <Position>
-        <Filename Value="clipboardsynclinux.lpr"/>
-        <Caret Line="35" Column="24"/>
-      </Position>
-      <Position>
-        <Filename Value="clipboardsynclinux.lpr"/>
-        <Caret Line="23" Column="55"/>
-      </Position>
-      <Position>
-        <Filename Value="clipboardsynclinux.lpr"/>
-        <Caret Line="39" Column="23"/>
-      </Position>
-      <Position>
-        <Filename Value="clipboardsynclinux.lpr"/>
-        <Caret Line="165" Column="89" TopLine="146"/>
-      </Position>
-      <Position>
-        <Filename Value="clipboardsynclinux.lpr"/>
-        <Caret Line="185" TopLine="145"/>
-      </Position>
-      <Position>
-        <Filename Value="clipboardsynclinux.lpr"/>
-      </Position>
+    <JumpHistory HistoryIndex="29">
       <Position>
         <Filename Value="clipboardsynclinux.lpr"/>
         <Caret Line="160" Column="15" TopLine="134"/>
@@ -53,23 +29,111 @@
       </Position>
       <Position>
         <Filename Value="clipboardsynclinux.lpr"/>
-        <Caret Line="39" Column="30"/>
+        <Caret Line="8" Column="5"/>
       </Position>
       <Position>
         <Filename Value="clipboardsynclinux.lpr"/>
-        <Caret Line="31" Column="62" TopLine="13"/>
+        <Caret Line="243" Column="3" TopLine="218"/>
       </Position>
       <Position>
         <Filename Value="clipboardsynclinux.lpr"/>
-        <Caret Line="99" Column="5" TopLine="61"/>
+        <Caret Line="247" Column="45" TopLine="218"/>
       </Position>
       <Position>
         <Filename Value="clipboardsynclinux.lpr"/>
-        <Caret Line="104" TopLine="65"/>
+        <Caret Line="169" Column="20" TopLine="169"/>
       </Position>
       <Position>
         <Filename Value="clipboardsynclinux.lpr"/>
-        <Caret Line="90" TopLine="57"/>
+        <Caret Line="220" Column="14" TopLine="204"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="221" Column="36" TopLine="205"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="223" Column="38" TopLine="207"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="225" Column="58" TopLine="209"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="226" Column="50" TopLine="210"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="245" Column="18" TopLine="229"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="247" Column="18" TopLine="231"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="261" Column="18" TopLine="241"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="222" Column="9" TopLine="201"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="250" Column="73" TopLine="232"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="270" Column="48" TopLine="237"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="259" Column="48" TopLine="237"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="276" Column="10" TopLine="240"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="10" Column="34"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="239" Column="5" TopLine="196"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="8" Column="34"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="221" Column="46" TopLine="207"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="238" Column="38" TopLine="201"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="11" Column="15"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="242" Column="7" TopLine="207"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="169" Column="51" TopLine="153"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="87" Column="40" TopLine="83"/>
+      </Position>
+      <Position>
+        <Filename Value="clipboardsynclinux.lpr"/>
+        <Caret Line="10" Column="46"/>
       </Position>
     </JumpHistory>
     <RunParams>
