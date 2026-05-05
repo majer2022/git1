@@ -57,6 +57,18 @@
       <Item>
         <Name Value="EFOpenError"/>
       </Item>
+      <Item>
+        <Name Value="ESocketError"/>
+      </Item>
+      <Item>
+        <Name Value="EHTTPClient"/>
+      </Item>
+      <Item>
+        <Name Value="EReadError"/>
+      </Item>
+      <Item>
+        <Name Value="EStreamError"/>
+      </Item>
     </Exceptions>
   </Debugging>
 </CONFIG>

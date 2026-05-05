@@ -2,17 +2,89 @@ program clipboard_server;
 
 {$mode objfpc}{$H+}
 
+{ ============================================================
+  clipboard_server  Ver. 3  —  endpoint /api/state
+  ============================================================
+  Dodano GET /api/state zwracajacy JSON {author, text}.
+  Pozostale endpointy bez zmian.
+  ============================================================ }
+
+{ ============================================================
+  clipboard_server  Ver. 4  —  Optimistic Locking
+  ============================================================
+  POST /api/push przyjmuje opcjonalny parametr expected_version.
+    expected_version == FVersion → zapisz, zwroc 200
+    expected_version != FVersion → zwroc 409 Conflict
+  Brak expected_version → zapisz bez sprawdzania (kompatybilnosc
+  z www i starymi klientami).
+  Sprawdzenie i zapis w jednej sekcji krytycznej — brak wyścigu
+  między sprawdzeniem a zapisem.
+  ============================================================ }
+
+{ ============================================================
+  clipboard_server  Ver. 5  —  Base64 dla tekstu schowka
+  ============================================================
+
+  Problem z Ver. 4:
+  ─────────────────────────────────────────────────────────────
+  GET /api/state zwracal tekst schowka wewnatrz JSON przez
+  JSONEscape (newline→\n, tab→\t, backslash→\\ itd.).
+  Klient Ver. 4 pytal /api/state, parsowal JSON, ale NIE
+  deSCAPOWAL sekwencji escape — widzial \n jako dwa znaki
+  zamiast jednego. Rozmiary nigdy sie nie zgadzaly przy
+  tekstach z programowania (duzo znakow specjalnych).
+  Efekt: TextLocal != ServerText zawsze → CASE C (czekaj)
+  lub bledne PULL ktore nadpisywalo schowek uzytkownika.
+
+  Rozwiazanie:
+  ─────────────────────────────────────────────────────────────
+  FPull przechowywany jest teraz jako Base64 (klient wysyla
+  Base64 w parametrze data=).
+
+  GET /api/state zwraca pole "text_b64" zamiast "text":
+    {"version":N,"author":"IP","text_b64":"BASE64"}
+  Base64 uzywa tylko znakow A-Za-z0-9+/= — zadnych znakow
+  specjalnych, zadnego JSON-escapingu, zadnych problemow
+  z porownaniem rozmiarow.
+
+  GET /api/pull (legacy) zwraca Base64 jako trzecia linia
+  (zamiast surowego tekstu) — stare klienty przestana
+  dzialac poprawnie, ale /api/pull nie jest juz uzywany.
+
+  POST /api/push z text/plain (www):
+  ─────────────────────────────────────────────────────────────
+  Przegladarka wysyla surowy tekst przez text/plain.
+  Serwer sam koduje go do Base64 przed zapisem do FPull.
+  Dzieki temu FPull ZAWSZE zawiera Base64, niezaleznie
+  od zrodla (klient Pascal lub www).
+
+  Zmiana w kodzie wzgledem Ver. 4:
+  ─────────────────────────────────────────────────────────────
+  + funkcja EncodeBase64(s) — FPC unit base64
+  + w POST /api/push: jesli text/plain → zakoduj do B64
+  + w GET /api/state: zwroc "text_b64" zamiast "text",
+    bez JSONEscape (Base64 nie wymaga escapingu)
+  + JSONEscape pozostaje dla pola "author" (IP, bezpieczne)
+  Wszystko inne identyczne z Ver. 4.
+  ============================================================ }
+
 uses
   {$IFDEF UNIX} cthreads {$ENDIF},
-  Classes, SysUtils, CustApp, fphttpserver, httpdefs, SyncObjs;
+  Classes, SysUtils, CustApp, fphttpserver, httpdefs, SyncObjs, base64;
 
 type
   TMyApplication = class(TCustomApplication)
   private
-    FHTTPServer: TFPHTTPServer;
-    FLock      : TCriticalSection;
-    FPush      : string;  // last value received from any client
-    FPull      : string;  // value served to clients (updated from FPush when changed)
+    FHTTPServer  : TFPHTTPServer;
+    FLock        : TCriticalSection;
+    FPull        : string;   // ZAWSZE przechowywany jako Base64
+    FAuthor      : string;
+    FVersion     : Int64;
+    FExeDir      : string;
+    FFileName    : string;
+    FFileSize    : Int64;
+    FFilePath    : string;
+
     function  GetPortFromArgs: Word;
     procedure HandleRequest(Sender: TObject;
       var ARequest : TFPHTTPConnectionRequest;
@@ -21,73 +93,231 @@ type
     procedure DoRun; override;
   end;
 
-function EscapeHTML(const S: string): string;
+{ ── Pomocnicze ────────────────────────────────────────────── }
+
+procedure LogMsg(const Msg: string); inline;
 begin
-  Result := StringReplace(S,      '&', '&amp;',  [rfReplaceAll]);
-  Result := StringReplace(Result, '<', '&lt;',   [rfReplaceAll]);
-  Result := StringReplace(Result, '>', '&gt;',   [rfReplaceAll]);
-  Result := StringReplace(Result, '"', '&quot;', [rfReplaceAll]);
-  Result := StringReplace(Result, #10, '<br>',   [rfReplaceAll]);
-  Result := StringReplace(Result, #13, '',        [rfReplaceAll]);
+  WriteLn('[', FormatDateTime('hh:nn:ss.zzz', Now), '] ', Msg);
+  Flush(Output);
 end;
+
+function URIDecode(const S: string): string;
+var
+  i: Integer;
+  c: Char;
+  Hex: string;
+begin
+  Result := '';
+  i := 1;
+  while i <= Length(S) do
+  begin
+    c := S[i];
+    if (c = '%') and (i + 2 <= Length(S)) then
+    begin
+      Hex := '$' + S[i+1] + S[i+2];
+      Result := Result + Chr(StrToIntDef(Hex, Ord('?')));
+      Inc(i, 3);
+    end
+    else if c = '+' then
+    begin
+      Result := Result + ' ';
+      Inc(i);
+    end
+    else
+    begin
+      Result := Result + c;
+      Inc(i);
+    end;
+  end;
+end;
+
+function SafeFileName(const S: string): string;
+var
+  i: Integer;
+begin
+  Result := '';
+  for i := 1 to Length(S) do
+    if S[i] in ['A'..'Z','a'..'z','0'..'9','_','-','.',' '] then
+      Result := Result + S[i]
+    else
+      Result := Result + '_';
+  if Result = '' then Result := 'upload';
+end;
+
+function GetFileSize(const APath: string): Int64;
+var
+  FS: TFileStream;
+begin
+  Result := 0;
+  if not FileExists(APath) then Exit;
+  FS := TFileStream.Create(APath, fmOpenRead or fmShareDenyNone);
+  try
+    Result := FS.Size;
+  finally
+    FS.Free;
+  end;
+end;
+
+// Escape tylko dla krotkich pol (author = IP).
+// Pole text_b64 jest Base64 — nie wymaga zadnego escapingu.
+function JSONEscapeSimple(const S: string): string;
+var
+  i: Integer;
+begin
+  Result := '';
+  for i := 1 to Length(S) do
+    case S[i] of
+      '"': Result := Result + '\"';
+      '\': Result := Result + '\\';
+    else
+      Result := Result + S[i];
+    end;
+end;
+
+// Koduje surowy tekst do Base64.
+// Wynik zawiera tylko A-Za-z0-9+/= — bezpieczny w JSON i HTTP.
+// FPull zawsze przechowuje Base64 — niezaleznie od zrodla.
+function EncodeBase64Str(const S: string): string;
+var
+  SS  : TStringStream;
+  Enc : TBase64EncodingStream;
+  Out : TStringStream;
+begin
+  Result := '';
+  if S = '' then Exit;
+  SS  := TStringStream.Create(S);
+  Out := TStringStream.Create('');
+  try
+    Enc := TBase64EncodingStream.Create(Out);
+    try
+      Enc.CopyFrom(SS, SS.Size);
+    finally
+      Enc.Free;  // Free wymusza flush bufora
+    end;
+    Result := Out.DataString;
+  finally
+    Out.Free;
+    SS.Free;
+  end;
+end;
+
+{ ── Glowna obsluga zadan ──────────────────────────────────── }
 
 procedure TMyApplication.HandleRequest(Sender: TObject;
   var ARequest : TFPHTTPConnectionRequest;
   var AResponse: TFPHTTPConnectionResponse);
 var
-  InputText: string;
-  SafeText : string;
+  InputData      : string;   // Base64 od klienta Pascal LUB surowy tekst od www
+  InputClient    : string;
+  ExpectedVerStr : string;
+  ExpectedVer    : Int64;
+  ShouldUpdate   : Boolean;
+  HTMLFile       : string;
+  SL             : TStringList;
+  RawName        : string;
+  SafeName       : string;
+  DestPath       : string;
+  FS             : TFileStream;
+  MS             : TMemoryStream;
+  InfoJSON       : string;
+  BufSize        : Int64;
+  RawContent     : string;
+  CurAuthor      : string;
+  CurPull        : string;   // Base64
+  CurVersion     : Int64;
 begin
   try
-    WriteLn('[', FormatDateTime('hh:nn:ss', Now), '] ',
-      ARequest.Method, ' ', ARequest.URI,
-      ' [', ARequest.RemoteAddr, ']');
-
-    // -- OPTIONS (CORS preflight) ------------------------------------------
+    { OPTIONS }
     if ARequest.Method = 'OPTIONS' then
     begin
       AResponse.Code := 204;
       AResponse.CustomHeaders.Values['Access-Control-Allow-Origin']  := '*';
       AResponse.CustomHeaders.Values['Access-Control-Allow-Methods'] := 'GET, POST, OPTIONS';
-      AResponse.CustomHeaders.Values['Access-Control-Allow-Headers'] := 'Content-Type';
+      AResponse.CustomHeaders.Values['Access-Control-Allow-Headers'] :=
+        'Content-Type, X-Filename, X-Filesize';
       Exit;
     end;
 
     AResponse.CustomHeaders.Values['Access-Control-Allow-Origin'] := '*';
 
-    // -- POST /api/push -> client sends its clipboard ----------------------
-    //    Store in FPush. If different from FPull, promote to FPull so other
-    //    clients will receive the new value on their next /api/pull.
+    { ── POST /api/push ──────────────────────────────────────
+      Klient Pascal wysyla data= jako Base64.
+      Przegladarka (www) wysyla surowy tekst jako text/plain —
+      serwer sam koduje go do Base64 przed zapisem.
+      FPull zawsze zawiera Base64. }
     if (ARequest.Method = 'POST') and (ARequest.URI = '/api/push') then
     begin
-      InputText := ARequest.ContentFields.Values['data'];
-      if InputText <> '' then
+      ExpectedVerStr := '';
+      ExpectedVer    := -1;
+      ShouldUpdate   := True;
+
+      if Pos('text/plain', LowerCase(ARequest.ContentType)) > 0 then
       begin
-        FLock.Enter;
-        try
-          if InputText <> FPush then
-          begin
-            FPush := InputText;
-            FPull := InputText;   // promote: new data available for all clients
-            WriteLn('  [PUSH -> PULL] "', Copy(InputText, 1, 80), '"');
-          end;
-        finally
-          FLock.Leave;
-        end;
+        // Zrodlo: www — surowy tekst, kodujemy do Base64
+        InputData   := EncodeBase64Str(ARequest.Content);
+        InputClient := '';
+        // www nie wysyla expected_version — brak optimistic locking
+      end
+      else
+      begin
+        // Zrodlo: klient Pascal — data= juz jest Base64
+        InputData      := ARequest.ContentFields.Values['data'];
+        InputClient    := Trim(ARequest.ContentFields.Values['client']);
+        ExpectedVerStr := Trim(ARequest.ContentFields.Values['expected_version']);
       end;
-      AResponse.Code        := 200;
-      AResponse.Content     := 'OK';
+
+      // Sprawdzenie wersji I zapis w jednej sekcji krytycznej
+      FLock.Enter;
+      try
+        if ExpectedVerStr <> '' then
+        begin
+          ExpectedVer := StrToInt64Def(ExpectedVerStr, -1);
+          if ExpectedVer <> FVersion then
+          begin
+            ShouldUpdate := False;
+            LogMsg('PUSH CONFLICT from=' + InputClient +
+                   ' expected=' + ExpectedVerStr +
+                   ' current='  + IntToStr(FVersion));
+          end;
+        end;
+
+        if ShouldUpdate and (InputData <> '') then
+        begin
+          Inc(FVersion);
+          FPull   := InputData;   // Base64
+          FAuthor := InputClient;
+          LogMsg('PUSH v' + IntToStr(FVersion) +
+                 ' from='     + InputClient +
+                 ' expected=' + ExpectedVerStr +
+                 ' b64='      + IntToStr(Length(InputData)) + 'B');
+          AResponse.Code    := 200;
+          AResponse.Content := IntToStr(FVersion);
+        end
+        else if not ShouldUpdate then
+        begin
+          AResponse.Code    := 409;
+          AResponse.Content := 'Conflict: expected=' + ExpectedVerStr +
+                               ' current=' + IntToStr(FVersion);
+        end
+        else
+        begin
+          AResponse.Code    := 200;
+          AResponse.Content := IntToStr(FVersion);
+        end;
+      finally
+        FLock.Leave;
+      end;
+
       AResponse.ContentType := 'text/plain';
       Exit;
     end;
 
-    // -- GET /api/pull -> client fetches current clipboard -----------------
-    //    Returns FPull (only updated when a client pushes something new).
+    { ── GET /api/pull — legacy, zwraca Base64 jako trzecia linia ── }
     if (ARequest.Method = 'GET') and (ARequest.URI = '/api/pull') then
     begin
       FLock.Enter;
       try
-        AResponse.Content := FPull;
+        AResponse.Content := IntToStr(FVersion) + #10 + FAuthor + #10 + FPull;
       finally
         FLock.Leave;
       end;
@@ -96,144 +326,193 @@ begin
       Exit;
     end;
 
-    // -- GET / -> web UI ---------------------------------------------------
-    if (ARequest.Method = 'GET') and
-       ((ARequest.URI = '/') or (ARequest.URI = '')) then
+    { ── GET /api/state — JSON z text_b64 zamiast text ──────
+      Kluczowa zmiana w Ver. 5: pole "text_b64" zawiera Base64.
+      Klient dekoduje Base64 po stronie klienta.
+      Brak JSONEscape dla tekstu — Base64 nie zawiera znakow
+      specjalnych wiec jest bezpieczny w JSON bez escapingu. }
+    if (ARequest.Method = 'GET') and (ARequest.URI = '/api/state') then
     begin
       FLock.Enter;
       try
-        SafeText := EscapeHTML(FPull);
+        CurAuthor  := FAuthor;
+        CurPull    := FPull;    // Base64
+        CurVersion := FVersion;
+      finally
+        FLock.Leave;
+      end;
+      AResponse.Code        := 200;
+      AResponse.ContentType := 'application/json; charset=utf-8';
+      // text_b64 nie wymaga JSONEscape — Base64 jest bezpieczny w JSON
+      AResponse.Content :=
+        '{"version":'   + IntToStr(CurVersion) +
+        ',"author":"'   + JSONEscapeSimple(CurAuthor) + '"' +
+        ',"text_b64":"' + CurPull + '"}';
+      Exit;
+    end;
+
+    { ── POST /api/file — bez zmian ─────────────────────────── }
+    if (ARequest.Method = 'POST') and (ARequest.URI = '/api/file') then
+    begin
+      RawName  := URIDecode(ARequest.CustomHeaders.Values['X-Filename']);
+      SafeName := SafeFileName(RawName);
+      if SafeName = '' then SafeName := 'upload';
+
+      DestPath := FExeDir + 'file' + PathDelim + SafeName;
+
+      FLock.Enter;
+      try
+        if (FFilePath <> '') and FileExists(FFilePath) then
+        begin
+          LogMsg('FILE del old: ' + FFilePath);
+          DeleteFile(FFilePath);
+        end;
+        FFileName := '';
+        FFilePath := '';
+        FFileSize := 0;
       finally
         FLock.Leave;
       end;
 
+      RawContent := ARequest.Content;
+      try
+        FS := TFileStream.Create(DestPath, fmCreate);
+        try
+          if Length(RawContent) > 0 then
+            FS.Write(RawContent[1], Length(RawContent));
+        finally
+          FS.Free;
+        end;
+      except
+        on E: Exception do
+        begin
+          LogMsg('FILE write ERROR: ' + E.Message);
+          AResponse.Code        := 500;
+          AResponse.Content     := 'Write failed: ' + E.Message;
+          AResponse.ContentType := 'text/plain';
+          Exit;
+        end;
+      end;
+
+      BufSize := GetFileSize(DestPath);
+
+      FLock.Enter;
+      try
+        FFileName := RawName;
+        FFilePath := DestPath;
+        FFileSize := BufSize;
+      finally
+        FLock.Leave;
+      end;
+
+      LogMsg('FILE saved: ' + SafeName + ' (' + IntToStr(BufSize) + 'B)');
       AResponse.Code        := 200;
-      AResponse.ContentType := 'text/html; charset=utf-8';
-      AResponse.CustomHeaders.Values['Content-Type'] := 'text/html; charset=utf-8';
-      AResponse.Content :=
-        '<!DOCTYPE html>' +
-        '<html lang="en"><head>' +
-        '<meta charset="utf-8">' +
-        '<meta name="viewport" content="width=device-width,initial-scale=1.0">' +
-        '<title>ClipSync</title>' +
-        '<link rel="preconnect" href="https://fonts.googleapis.com">' +
-        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' +
-        '<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">' +
-        '<style>' +
-        ':root{' +
-        '--bg:#07090d;--s1:#0c1018;--s2:#111620;--b1:#1a2535;--b2:#253650;' +
-        '--text:#bfcfdf;--dim:#3d5570;--accent:#00c8f0;--accent-glow:rgba(0,200,240,0.15);' +
-        '--green:#00df82;--green-glow:rgba(0,223,130,0.15);--red:#ff4560;' +
-        '--ui:"DM Sans",sans-serif;--mono:"IBM Plex Mono",monospace' +
-        '}' +
-        '*{box-sizing:border-box;margin:0;padding:0}' +
-        'html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--ui)}' +
-        '::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}' +
-        '::-webkit-scrollbar-thumb{background:var(--b2);border-radius:2px}' +
-        'header{height:52px;display:flex;align-items:center;justify-content:space-between;' +
-        'padding:0 18px;background:var(--s1);border-bottom:1px solid var(--b1);flex-shrink:0}' +
-        '.wordmark{display:flex;align-items:center;gap:9px}' +
-        '.wm-badge{width:26px;height:26px;border-radius:7px;' +
-        'background:linear-gradient(135deg,var(--accent),#0066cc);' +
-        'display:grid;place-items:center;font-size:13px}' +
-        '.wm-name{font-size:15px;font-weight:600;letter-spacing:-.3px}' +
-        '.wm-name em{color:var(--accent);font-style:normal}' +
-        '.live-pill{display:flex;align-items:center;gap:5px;background:var(--s2);' +
-        'border:1px solid var(--b1);border-radius:20px;padding:4px 10px 4px 7px;' +
-        'font-size:11px;font-family:var(--mono);color:var(--dim)}' +
-        '.live-dot{width:6px;height:6px;border-radius:50%;background:var(--green);' +
-        'box-shadow:0 0 5px var(--green);flex-shrink:0;animation:blink 2.2s ease-in-out infinite}' +
-        '@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}' +
-        '.layout{display:flex;height:calc(100vh - 52px);overflow:hidden}' +
-        '.pane{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}' +
-        '.pane+.pane{border-left:1px solid var(--b1)}' +
-        '.ph{display:flex;align-items:center;justify-content:space-between;' +
-        'padding:9px 14px;background:var(--s2);border-bottom:1px solid var(--b1);flex-shrink:0;gap:8px}' +
-        '.ph-tag{font-size:10px;font-weight:600;letter-spacing:1.8px;text-transform:uppercase;' +
-        'font-family:var(--mono);display:flex;align-items:center;gap:6px}' +
-        '.ph-tag.rx{color:var(--accent)}.ph-tag.tx{color:var(--green)}' +
-        '.btn{display:flex;align-items:center;gap:5px;background:transparent;' +
-        'border:1px solid var(--b2);color:var(--accent);border-radius:6px;' +
-        'padding:5px 11px;cursor:pointer;font-family:var(--mono);font-size:10px;' +
-        'font-weight:600;letter-spacing:.8px;text-transform:uppercase;' +
-        'transition:background .15s,border-color .15s,transform .1s}' +
-        '.btn:hover{background:var(--accent-glow);border-color:var(--accent)}' +
-        '.btn:active{transform:scale(.94)}' +
-        '.btn.ok{color:var(--green);border-color:var(--green);background:var(--green-glow)}' +
-        '#display{flex:1;overflow:auto;padding:16px 18px;white-space:pre-wrap;' +
-        'word-break:break-word;font-size:13px;line-height:1.8;font-family:var(--mono)}' +
-        '#display:empty::before{content:"No data yet...";color:var(--dim);font-style:italic}' +
-        'textarea{flex:1;background:transparent;color:var(--text);border:none;' +
-        'padding:16px 18px;font-size:13px;font-family:var(--mono);resize:none;outline:none;line-height:1.8}' +
-        'textarea::placeholder{color:var(--dim);font-style:italic}' +
-        '.send-bar{height:26px;flex-shrink:0;padding:0 14px;display:flex;align-items:center;' +
-        'border-top:1px solid var(--b1);font-size:10px;font-family:var(--mono);' +
-        'color:var(--dim);transition:color .2s}' +
-        '.send-bar.sending{color:var(--green)}.send-bar.err{color:var(--red)}' +
-        '@media(max-width:620px){' +
-        'html,body{height:auto;overflow:auto}' +
-        '.layout{flex-direction:column;height:auto;min-height:calc(100vh - 52px)}' +
-        '.pane{min-height:45vh}.pane+.pane{border-left:none;border-top:1px solid var(--b1)}}' +
-        '</style></head><body>' +
-        '<header>' +
-        '<div class="wordmark"><div class="wm-badge">&#x2398;</div>' +
-        '<span class="wm-name">Clip<em>Sync</em></span></div>' +
-        '<div class="live-pill"><div class="live-dot"></div><span id="liveTxt">live</span></div>' +
-        '</header>' +
-        '<div class="layout">' +
-        '<div class="pane">' +
-        '<div class="ph"><span class="ph-tag rx">&#x2193; Incoming</span>' +
-        '<button class="btn" id="copyBtn" onclick="copyText()">&#x2398;&nbsp;Copy</button></div>' +
-        '<div id="display">' + SafeText + '</div>' +
-        '</div>' +
-        '<div class="pane">' +
-        '<div class="ph"><span class="ph-tag tx">&#x2191; Outgoing</span></div>' +
-        '<textarea id="inputBox" placeholder="Type or paste text to broadcast..."></textarea>' +
-        '<div class="send-bar" id="sendBar"></div>' +
-        '</div>' +
-        '</div>' +
-        '<script>' +
-        'var display=document.getElementById("display");' +
-        'var inputBox=document.getElementById("inputBox");' +
-        'var copyBtn=document.getElementById("copyBtn");' +
-        'var sendBar=document.getElementById("sendBar");' +
-        'var liveTxt=document.getElementById("liveTxt");' +
-        'var lastData="";var sendTimer=null;var errCount=0;' +
-        'function sendData(text){' +
-        'sendBar.textContent="sending...";sendBar.className="send-bar sending";' +
-        'fetch("/api/push",{method:"POST",' +
-        'headers:{"Content-Type":"application/x-www-form-urlencoded"},' +
-        'body:"data="+encodeURIComponent(text)})' +
-        '.then(function(){sendBar.textContent="\u2713 sent";' +
-        'setTimeout(function(){sendBar.textContent="";sendBar.className="send-bar";},1500);})' +
-        '.catch(function(){sendBar.textContent="send failed";sendBar.className="send-bar err";});}' +
-        'inputBox.addEventListener("input",function(){' +
-        'clearTimeout(sendTimer);sendTimer=setTimeout(function(){sendData(inputBox.value);},450);});' +
-        'function copyText(){var t=display.innerText;' +
-        'if(navigator.clipboard)navigator.clipboard.writeText(t).catch(fbCopy);else fbCopy();' +
-        'copyBtn.innerHTML="\u2713&nbsp;Copied!";copyBtn.classList.add("ok");' +
-        'setTimeout(function(){copyBtn.innerHTML="\u2398&nbsp;Copy";copyBtn.classList.remove("ok");},1600);}' +
-        'function fbCopy(){var r=document.createRange();r.selectNodeContents(display);' +
-        'var s=window.getSelection();s.removeAllRanges();s.addRange(r);' +
-        'document.execCommand("copy");s.removeAllRanges();}' +
-        'function poll(){fetch("/api/pull").then(function(r){return r.text();})' +
-        '.then(function(t){errCount=0;liveTxt.textContent="live";' +
-        'if(t!==lastData){lastData=t;display.innerText=t;}})' +
-        '.catch(function(){errCount++;if(errCount>2)liveTxt.textContent="offline";});}' +
-        'setInterval(poll,1200);poll();' +
-        '</script></body></html>';
+      AResponse.Content     := 'OK';
+      AResponse.ContentType := 'text/plain';
       Exit;
     end;
 
-    // -- 404 ---------------------------------------------------------------
+    { ── GET /api/file — bez zmian ──────────────────────────── }
+    if (ARequest.Method = 'GET') and (ARequest.URI = '/api/file') then
+    begin
+      FLock.Enter;
+      try
+        DestPath := FFilePath;
+        RawName  := FFileName;
+        BufSize  := FFileSize;
+      finally
+        FLock.Leave;
+      end;
+
+      if (DestPath = '') or not FileExists(DestPath) then
+      begin
+        AResponse.Code        := 404;
+        AResponse.Content     := 'No file on server';
+        AResponse.ContentType := 'text/plain';
+        Exit;
+      end;
+
+      try
+        MS := TMemoryStream.Create;
+        MS.LoadFromFile(DestPath);
+        MS.Position := 0;
+      except
+        on E: Exception do
+        begin
+          LogMsg('FILE read ERROR: ' + E.Message);
+          AResponse.Code        := 500;
+          AResponse.Content     := 'Read failed: ' + E.Message;
+          AResponse.ContentType := 'text/plain';
+          Exit;
+        end;
+      end;
+
+      AResponse.Code        := 200;
+      AResponse.ContentType := 'application/octet-stream';
+      AResponse.CustomHeaders.Values['Content-Disposition'] :=
+        'attachment; filename="' + SafeFileName(RawName) + '"';
+      AResponse.CustomHeaders.Values['Content-Length'] :=
+        IntToStr(MS.Size);
+      AResponse.ContentStream := MS;
+
+      LogMsg('FILE send: ' + RawName + ' (' + IntToStr(BufSize) + 'B)');
+      Exit;
+    end;
+
+    { ── GET /api/fileinfo — bez zmian ──────────────────────── }
+    if (ARequest.Method = 'GET') and (ARequest.URI = '/api/fileinfo') then
+    begin
+      FLock.Enter;
+      try
+        if FFileName <> '' then
+          InfoJSON := '{"name":"' +
+            StringReplace(FFileName, '"', '\"', [rfReplaceAll]) +
+            '","size":' + IntToStr(FFileSize) + '}'
+        else
+          InfoJSON := '';
+      finally
+        FLock.Leave;
+      end;
+      AResponse.Code        := 200;
+      AResponse.Content     := InfoJSON;
+      AResponse.ContentType := 'application/json; charset=utf-8';
+      Exit;
+    end;
+
+    { ── GET / — index.html — bez zmian ─────────────────────── }
+    if (ARequest.Method = 'GET') and
+       ((ARequest.URI = '/') or (ARequest.URI = '')) then
+    begin
+      HTMLFile := FExeDir + 'index.html';
+      if not FileExists(HTMLFile) then
+      begin
+        AResponse.Code        := 404;
+        AResponse.Content     := 'index.html not found in ' + FExeDir;
+        AResponse.ContentType := 'text/plain';
+        Exit;
+      end;
+      SL := TStringList.Create;
+      try
+        SL.LoadFromFile(HTMLFile);
+        AResponse.Content := SL.Text;
+      finally
+        SL.Free;
+      end;
+      AResponse.Code        := 200;
+      AResponse.ContentType := 'text/html; charset=utf-8';
+      Exit;
+    end;
+
+    { 404 }
     AResponse.Code        := 404;
-    AResponse.Content     := 'Not found';
+    AResponse.Content     := 'Not found: ' + ARequest.URI;
     AResponse.ContentType := 'text/plain';
+    LogMsg('404 ' + ARequest.Method + ' ' + ARequest.URI);
 
   except
     on E: Exception do
     begin
-      WriteLn('ERROR: ', E.Message);
+      LogMsg('REQUEST ERROR: ' + E.Message);
       try
         AResponse.Code        := 500;
         AResponse.Content     := 'Internal error';
@@ -247,15 +526,26 @@ procedure TMyApplication.DoRun;
 var
   Port: Word;
 begin
-  Port  := GetPortFromArgs;
-  FLock := TCriticalSection.Create;
-  FPush := '';
-  FPull := '';
+  Port      := GetPortFromArgs;
+  FExeDir   := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
+  FLock     := TCriticalSection.Create;
+  FPull     := '';
+  FAuthor   := '';
+  FVersion  := 0;
+  FFileName := '';
+  FFilePath := '';
+  FFileSize := 0;
 
-  WriteLn('Clipboard Sync Server -- http://0.0.0.0:', Port);
-  WriteLn('  POST /api/push  -> receive clipboard from client');
-  WriteLn('  GET  /api/pull  -> serve clipboard to clients');
-  WriteLn('  GET  /          -> web UI');
+  ForceDirectories(FExeDir + 'file');
+
+  LogMsg('Clipboard Sync Server Ver.5 -- http://0.0.0.0:' + IntToStr(Port));
+  WriteLn('  POST /api/push     -> wyslij tekst (data=BASE64, opt. expected_version)');
+  WriteLn('  GET  /api/pull     -> legacy (zwraca Base64)');
+  WriteLn('  GET  /api/state    -> JSON {version, author, text_b64}');
+  WriteLn('  POST /api/file     -> wgraj plik');
+  WriteLn('  GET  /api/file     -> pobierz plik');
+  WriteLn('  GET  /api/fileinfo -> polling: nazwa + rozmiar');
+  WriteLn('  GET  /             -> ', FExeDir, 'index.html');
 
   FHTTPServer           := TFPHTTPServer.Create(nil);
   FHTTPServer.Port      := Port;
@@ -291,4 +581,3 @@ begin
     App.Free;
   end;
 end.
-

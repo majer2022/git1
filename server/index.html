@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ClipSync</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Outfit:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:        #080b10;
+  --surface:   #0d1117;
+  --panel:     #111720;
+  --border:    rgba(255,255,255,0.06);
+  --border-hi: rgba(255,255,255,0.12);
+  --text:      #c8d8e8;
+  --muted:     #3a5068;
+  --cyan:      #00d4ff;
+  --cyan-dim:  rgba(0,212,255,0.08);
+  --cyan-glow: rgba(0,212,255,0.18);
+  --emerald:   #00e5a0;
+  --em-dim:    rgba(0,229,160,0.08);
+  --em-glow:   rgba(0,229,160,0.18);
+  --amber:     #ffb340;
+  --am-dim:    rgba(255,179,64,0.08);
+  --am-glow:   rgba(255,179,64,0.2);
+  --red:       #ff4466;
+  --mono:      'DM Mono', monospace;
+  --sans:      'Outfit', sans-serif;
+  --r:         10px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); overflow: hidden; }
+
+body::before {
+  content: '';
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(rgba(0,212,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,212,255,0.025) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+header {
+  position: relative; z-index: 10;
+  height: 56px;
+  display: flex;
+  align-items: stretch;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(0,212,255,0.04);
+}
+
+.logo {
+  display: flex; align-items: center; gap: 11px;
+  padding: 0 20px;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+  text-decoration: none;
+}
+.logo-mark {
+  width: 30px; height: 30px; border-radius: 9px;
+  background: linear-gradient(135deg, var(--cyan) 0%, #0062e0 100%);
+  display: grid; place-items: center;
+  box-shadow: 0 0 16px rgba(0,212,255,0.3);
+  flex-shrink: 0;
+}
+.logo-mark svg { width: 15px; height: 15px; }
+.logo-text {
+  font-family: var(--sans); font-weight: 700; font-size: 16px;
+  letter-spacing: -0.4px; color: var(--text);
+}
+.logo-text span { color: var(--cyan); }
+
+.ft-drop {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  cursor: pointer; position: relative; overflow: hidden;
+  border-right: 1px solid var(--border);
+  transition: background .2s;
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  letter-spacing: 0.3px;
+}
+.ft-drop:hover { background: var(--am-dim); color: var(--amber); }
+.ft-drop:hover .ft-drop-icon { color: var(--amber); }
+.ft-drop.dragover { background: rgba(255,179,64,0.1); color: var(--amber); }
+.ft-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; font-size: 0; }
+.ft-drop-icon { display: flex; transition: transform .25s, color .2s; color: var(--muted); }
+.ft-drop-icon svg { width: 15px; height: 15px; }
+.ft-drop:hover .ft-drop-icon { transform: translateY(-2px); }
+
+.ft-prog {
+  position: absolute; bottom: 0; left: 0;
+  height: 2px; width: 0%;
+  background: linear-gradient(90deg, var(--amber), #ffdd80);
+  transition: width .12s linear;
+  box-shadow: 0 0 8px var(--amber);
+}
+
+.ft-info {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 16px;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0; max-width: 480px;
+}
+.ft-info.hidden { display: none !important; }
+
+.ft-icon {
+  width: 30px; height: 30px; border-radius: 7px;
+  background: var(--am-dim); border: 1px solid rgba(255,179,64,0.2);
+  display: grid; place-items: center; color: var(--amber); flex-shrink: 0;
+}
+.ft-icon svg { width: 14px; height: 14px; }
+
+.ft-meta { flex: 1; min-width: 0; }
+.ft-name {
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 300px;
+}
+.ft-bytes { font-family: var(--mono); font-size: 9px; color: var(--muted); margin-top: 1px; }
+
+.ft-dl {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: 6px;
+  background: var(--em-dim); border: 1px solid rgba(0,229,160,0.25);
+  color: var(--emerald); cursor: pointer;
+  font-family: var(--mono); font-size: 10px;
+  transition: background .15s, transform .1s;
+  flex-shrink: 0; white-space: nowrap;
+}
+.ft-dl:hover { background: var(--em-glow); }
+.ft-dl:active { transform: scale(.93); }
+.ft-dl svg { width: 11px; height: 11px; }
+
+.ft-x {
+  background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 6px;
+  flex-shrink: 0; transition: color .15s;
+}
+.ft-x:hover { color: var(--red); }
+
+/* author badge */
+.author-badge {
+  font-family: var(--mono); font-size: 9px;
+  color: var(--muted); letter-spacing: 0.5px;
+  padding: 2px 7px; border-radius: 4px;
+  border: 1px solid var(--border);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+.header-right {
+  display: flex; align-items: center;
+  padding: 0 18px; flex-shrink: 0;
+}
+.version-tag {
+  font-family: var(--mono); font-size: 9px; color: var(--muted);
+  letter-spacing: 1px; text-transform: uppercase;
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 3px 7px;
+}
+
+.main {
+  position: relative; z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: calc(100vh - 56px);
+}
+
+.panel {
+  display: flex; flex-direction: column;
+  overflow: hidden; background: var(--panel);
+}
+.panel:first-child { border-right: 1px solid var(--border); }
+
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 18px;
+  height: 42px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.panel-label {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 1.5px;
+}
+.panel-label svg { width: 13px; height: 13px; opacity: .65; }
+.panel-label.in  { color: var(--cyan); }
+.panel-label.out { color: var(--emerald); }
+
+.panel:first-child .panel-head { box-shadow: inset 0 -1px 0 rgba(0,212,255,0.15); }
+.panel:last-child  .panel-head { box-shadow: inset 0 -1px 0 rgba(0,229,160,0.15); }
+
+.copy-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 11px; border-radius: 5px;
+  background: transparent; border: 1px solid var(--border-hi);
+  color: var(--cyan); cursor: pointer;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .5px;
+  text-transform: uppercase;
+  transition: background .15s, border-color .15s, transform .1s;
+}
+.copy-btn svg { width: 11px; height: 11px; }
+.copy-btn:hover { background: var(--cyan-dim); border-color: var(--cyan); }
+.copy-btn:active { transform: scale(.93); }
+.copy-btn.ok { color: var(--emerald); border-color: var(--emerald); background: var(--em-dim); }
+
+.panel-body {
+  flex: 1; overflow: auto;
+  padding: 18px 20px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.8;
+  white-space: pre-wrap; word-break: break-word;
+}
+.panel-body:empty::before {
+  content: 'Waiting for incoming data…';
+  color: var(--muted); font-style: italic; font-size: 12px;
+}
+
+.panel-textarea {
+  flex: 1;
+  background: transparent; color: var(--text);
+  border: none; outline: none; resize: none;
+  padding: 18px 20px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.8;
+}
+.panel-textarea::placeholder { color: var(--muted); font-style: italic; font-size: 12px; }
+
+.send-status {
+  height: 24px; flex-shrink: 0;
+  padding: 0 20px;
+  display: flex; align-items: center;
+  font-family: var(--mono); font-size: 10px; color: transparent;
+  transition: color .25s;
+}
+.send-status.ok  { color: var(--emerald); }
+.send-status.err { color: var(--red); }
+
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+header { animation: fadeUp .35s ease both; }
+.panel:first-child  { animation: fadeUp .4s .05s ease both; }
+.panel:last-child   { animation: fadeUp .4s .1s ease both; }
+
+.mob-tabs { display: none; }
+
+@media (max-width: 700px) {
+  header { height: auto; flex-wrap: wrap; gap: 0; }
+  .logo  { height: 50px; }
+  .header-right { height: 50px; margin-left: auto; }
+  .ft-drop { min-height: 42px; order: 3; flex-basis: 100%; border-top: 1px solid var(--border); border-right: none; }
+  .ft-info { order: 4; flex-basis: 100%; border-right: none; border-top: 1px solid var(--border); padding: 8px 16px; max-width: 100%; }
+
+  .mob-tabs {
+    display: flex;
+    position: relative; z-index: 5;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .mob-tab {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px;
+    height: 42px; cursor: pointer;
+    font-family: var(--mono); font-size: 10px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 1.4px;
+    color: var(--muted); background: none; border: none;
+    border-bottom: 2px solid transparent;
+    transition: color .2s, border-color .2s;
+  }
+  .mob-tab svg { width: 13px; height: 13px; }
+  .mob-tab.active-in  { color: var(--cyan);    border-bottom-color: var(--cyan); }
+  .mob-tab.active-out { color: var(--emerald); border-bottom-color: var(--emerald); }
+
+  .main {
+    grid-template-columns: 1fr;
+    height: calc(100dvh - 50px - 42px);
+  }
+  .panel { height: 100%; }
+  .panel:first-child { border-right: none; }
+  .panel.mob-hidden { display: none; }
+  .panel-head { display: none; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="2" width="6" height="4" rx="1"/>
+        <path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/>
+      </svg>
+    </div>
+    <span class="logo-text">Clip<span>Sync</span></span>
+  </div>
+
+  <div class="ft-drop" id="ftDrop">
+    <div class="ft-drop-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+    </div>
+    <span id="ftLabel">drop file or click to upload</span>
+    <input type="file" id="fileInput">
+    <div class="ft-prog" id="ftProg"></div>
+  </div>
+
+  <div class="ft-info hidden" id="ftInfo">
+    <div class="ft-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+      </svg>
+    </div>
+    <div class="ft-meta">
+      <div class="ft-name" id="ftName">—</div>
+      <div class="ft-bytes" id="ftBytes">—</div>
+    </div>
+    <button class="ft-dl" onclick="downloadFile()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="8 17 12 21 16 17"/>
+        <line x1="12" y1="21" x2="12" y2="3"/>
+      </svg>
+      Download
+    </button>
+    <button class="ft-x" onclick="resetUpload()" title="Clear">✕</button>
+  </div>
+
+  <div class="header-right">
+    <!-- autor ostatniego wpisu -->
+    <span class="author-badge" id="authorBadge" title="last sender">—</span>
+    &nbsp;
+    <span class="version-tag">v2.5</span>
+  </div>
+</header>
+
+<div class="mob-tabs">
+  <button class="mob-tab active-in" id="tabIn" onclick="switchTab('in')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="21" x2="12" y2="3"/></svg>
+    Incoming
+  </button>
+  <button class="mob-tab" id="tabOut" onclick="switchTab('out')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 7 12 3 8 7"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+    Outgoing
+  </button>
+</div>
+
+<main class="main">
+  <div class="panel">
+    <div class="panel-head">
+      <span class="panel-label in">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="8 17 12 21 16 17"/><line x1="12" y1="21" x2="12" y2="3"/>
+        </svg>
+        Incoming
+      </span>
+      <button class="copy-btn" id="copyBtn" onclick="copyText()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+        </svg>
+        Copy
+      </button>
+    </div>
+    <div class="panel-body" id="display"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span class="panel-label out">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="16 7 12 3 8 7"/><line x1="12" y1="3" x2="12" y2="21"/>
+        </svg>
+        Outgoing
+      </span>
+    </div>
+    <textarea class="panel-textarea" id="inputBox" placeholder="Paste or type to broadcast…"></textarea>
+    <div class="send-status" id="sendStatus"></div>
+  </div>
+</main>
+
+<script>
+var display     = document.getElementById('display');
+var inputBox    = document.getElementById('inputBox');
+var sendStatus  = document.getElementById('sendStatus');
+var copyBtn     = document.getElementById('copyBtn');
+var ftDrop      = document.getElementById('ftDrop');
+var ftLabel     = document.getElementById('ftLabel');
+var fileInput   = document.getElementById('fileInput');
+var ftProg      = document.getElementById('ftProg');
+var ftInfo      = document.getElementById('ftInfo');
+var ftName      = document.getElementById('ftName');
+var ftBytes     = document.getElementById('ftBytes');
+var authorBadge = document.getElementById('authorBadge');
+
+var lastDisplayText = '';   // tylko tekst — nie cały JSON
+var lastFileInfo    = '';
+var sendTimer       = null;
+
+/* ── FILE DROP ── */
+ftDrop.addEventListener('click', function(e) {
+  if (e.target !== fileInput) fileInput.click();
+});
+ftDrop.addEventListener('dragover', function(e) {
+  e.preventDefault(); ftDrop.classList.add('dragover');
+});
+ftDrop.addEventListener('dragleave', function() {
+  ftDrop.classList.remove('dragover');
+});
+ftDrop.addEventListener('drop', function(e) {
+  e.preventDefault(); ftDrop.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', function(e) {
+  if (e.target.files[0]) uploadFile(e.target.files[0]);
+});
+
+/* ── TEXT OUTGOING ── */
+function sendData(text) {
+  if (!text.trim()) return;
+  sendStatus.textContent = 'sending…';
+  sendStatus.className = 'send-status';
+  fetch('/api/push', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: text
+  })
+  .then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    sendStatus.textContent = '✓ sent';
+    sendStatus.className = 'send-status ok';
+    setTimeout(function() {
+      sendStatus.textContent = '';
+      sendStatus.className = 'send-status';
+    }, 1400);
+  })
+  .catch(function() {
+    sendStatus.textContent = 'failed';
+    sendStatus.className = 'send-status err';
+  });
+}
+
+inputBox.addEventListener('input', function() {
+  clearTimeout(sendTimer);
+  sendTimer = setTimeout(function() { sendData(inputBox.value); }, 500);
+});
+
+function poll() {
+  fetch('/api/state').then(function(r) { return r.json(); }).then(function(obj) {
+    var text = obj.text_b64 ? atob(obj.text_b64) : '';
+    var author = obj.author || '';
+    if (text !== lastDisplayText) {
+      lastDisplayText = text;
+      display.innerText = text;
+    }
+    authorBadge.textContent = author ? 'from: ' + author : '—';
+  }).catch(function() {
+    authorBadge.textContent = '—';
+  });
+}
+
+
+function pollFile() {
+  fetch('/api/fileinfo')
+    .then(function(r) { return r.text(); })
+    .then(function(t) {
+      if (!t || t === lastFileInfo) return;
+      lastFileInfo = t;
+      try {
+        var info = JSON.parse(t);
+        if (info.name) showFileInfo(info.name, info.size);
+      } catch(e) {}
+    })
+    .catch(function() {});
+}
+
+setInterval(poll, 1200);
+setInterval(pollFile, 2000);
+poll(); pollFile();
+
+/* ── COPY ── */
+function copyText() {
+  var t = display.innerText; if (!t) return;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(t).catch(fbCopy);
+  } else {
+    fbCopy();
+  }
+  copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px"><polyline points="20 6 9 17 4 12"/></svg> Copied!';
+  copyBtn.classList.add('ok');
+  setTimeout(function() {
+    copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy';
+    copyBtn.classList.remove('ok');
+  }, 1600);
+}
+function fbCopy() {
+  var r = document.createRange(); r.selectNodeContents(display);
+  var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  document.execCommand('copy'); s.removeAllRanges();
+}
+
+/* ── UPLOAD ── */
+function uploadFile(file) {
+  ftProg.style.width = '0%';
+  ftLabel.textContent = 'uploading ' + file.name + '…';
+  ftInfo.classList.add('hidden');
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/file');
+  xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
+  xhr.setRequestHeader('X-Filesize', file.size);
+
+  xhr.upload.onprogress = function(e) {
+    if (e.lengthComputable) {
+      var pct = Math.round(e.loaded / e.total * 100);
+      ftProg.style.width = pct + '%';
+      ftLabel.textContent = 'uploading… ' + pct + '%';
+    }
+  };
+
+  xhr.onload = function() {
+    ftProg.style.width = '0%';
+    if (xhr.status === 200) {
+      ftLabel.textContent = 'drop file or click to upload';
+      showFileInfo(file.name, file.size);
+      lastFileInfo = JSON.stringify({ name: file.name, size: file.size });
+    } else {
+      ftLabel.textContent = 'upload failed — try again';
+      setTimeout(function() { ftLabel.textContent = 'drop file or click to upload'; }, 2500);
+    }
+  };
+
+  xhr.onerror = function() {
+    ftProg.style.width = '0%';
+    ftLabel.textContent = 'network error — try again';
+    setTimeout(function() { ftLabel.textContent = 'drop file or click to upload'; }, 2500);
+  };
+
+  xhr.send(file);
+}
+
+function showFileInfo(name, size) {
+  ftName.textContent  = name;
+  ftBytes.textContent = formatBytes(size);
+  ftInfo.classList.remove('hidden');
+}
+
+function resetUpload() {
+  ftInfo.classList.add('hidden');
+  ftProg.style.width = '0%';
+  ftLabel.textContent = 'drop file or click to upload';
+  lastFileInfo = '';
+  fileInput.value = '';
+}
+
+function downloadFile() {
+  var a = document.createElement('a');
+  a.href = '/api/file';
+  a.download = ftName.textContent || 'file';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+}
+
+function switchTab(which) {
+  var panelIn  = document.querySelector('.panel:first-child');
+  var panelOut = document.querySelector('.panel:last-child');
+  var tIn      = document.getElementById('tabIn');
+  var tOut     = document.getElementById('tabOut');
+  if (which === 'in') {
+    panelIn.classList.remove('mob-hidden');
+    panelOut.classList.add('mob-hidden');
+    tIn.className  = 'mob-tab active-in';
+    tOut.className = 'mob-tab';
+  } else {
+    panelOut.classList.remove('mob-hidden');
+    panelIn.classList.add('mob-hidden');
+    tOut.className = 'mob-tab active-out';
+    tIn.className  = 'mob-tab';
+  }
+}
+
+function formatBytes(b) {
+  b = Number(b);
+  if (b < 1024)       return b + ' B';
+  if (b < 1048576)    return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+  return (b / 1073741824).toFixed(2) + ' GB';
+}
+</script>
+</body>
+</html>
+
