@@ -358,52 +358,34 @@ begin
       SafeName := SafeFileName(RawName);
       if SafeName = '' then SafeName := 'upload';
 
-      DestPath := FExeDir + 'file' + PathDelim + SafeName;
+     DestPath := FExeDir + 'file' + PathDelim + SafeName;
 
-      FLock.Enter;
-      try
-        if (FFilePath <> '') and FileExists(FFilePath) then
-        begin
-          LogMsg('FILE del old: ' + FFilePath);
-          DeleteFile(FFilePath);
-        end;
-        FFileName := '';
-        FFilePath := '';
-        FFileSize := 0;
-      finally
-        FLock.Leave;
-      end;
+// Upewnij sie ze katalog istnieje (zabezpieczenie gdyby ktos usnal go recznie)
+ForceDirectories(FExeDir + 'file');
 
-      RawContent := ARequest.Content;
-      try
-        FS := TFileStream.Create(DestPath, fmCreate);
-        try
-          if Length(RawContent) > 0 then
-            FS.Write(RawContent[1], Length(RawContent));
-        finally
-          FS.Free;
-        end;
-      except
-        on E: Exception do
-        begin
-          LogMsg('FILE write ERROR: ' + E.Message);
-          AResponse.Code        := 500;
-          AResponse.Content     := 'Write failed: ' + E.Message;
-          AResponse.ContentType := 'text/plain';
-          Exit;
-        end;
-      end;
-
-      BufSize := GetFileSize(DestPath);
-
-      FLock.Enter;
-      try
-        FFileName := RawName;
-        FFilePath := DestPath;
-        FFileSize := BufSize;
-      finally
-        FLock.Leave;
-      end;
+FLock.Enter;
+try
+  // Skasuj poprzedni plik (dowolna nazwa) jesli istnieje
+  if (FFilePath <> '') and FileExists(FFilePath) then
+  begin
+    LogMsg('FILE del old: ' + FFilePath);
+    DeleteFile(FFilePath);
+  end;
+  // Jesli nowy plik ma ta sama nazwe co stary, FFilePath == DestPath
+  // i powyzszy DeleteFile juz go usunal. Jesli jednak FFilePath bylo puste
+  // (pierwszy upload) ale plik o tej nazwie juz fizycznie istnieje
+  // (np. po restarcie serwera), tez go usun.
+  if (DestPath <> FFilePath) and FileExists(DestPath) then
+  begin
+    LogMsg('FILE del existing: ' + DestPath);
+    DeleteFile(DestPath);
+  end;
+  FFileName := '';
+  FFilePath := '';
+  FFileSize := 0;
+finally
+  FLock.Leave;
+end;
 
       LogMsg('FILE saved: ' + SafeName + ' (' + IntToStr(BufSize) + 'B)');
       AResponse.Code        := 200;

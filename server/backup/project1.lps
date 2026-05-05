@@ -9,21 +9,13 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="clipboard_server"/>
         <IsVisibleTab Value="True"/>
-        <TopLine Value="549"/>
-        <CursorPos X="5" Y="583"/>
+        <TopLine Value="355"/>
+        <CursorPos X="5" Y="388"/>
         <UsageCount Value="431"/>
         <Loaded Value="True"/>
       </Unit>
     </Units>
     <JumpHistory HistoryIndex="29">
-      <Position>
-        <Filename Value="project1.lpr"/>
-        <Caret Line="160" Column="57" TopLine="146"/>
-      </Position>
-      <Position>
-        <Filename Value="project1.lpr"/>
-        <Caret Line="410" TopLine="376"/>
-      </Position>
       <Position>
         <Filename Value="project1.lpr"/>
         <Caret Line="148" Column="65" TopLine="146"/>
@@ -135,6 +127,14 @@
       <Position>
         <Filename Value="project1.lpr"/>
         <Caret Line="459" Column="24" TopLine="443"/>
+      </Position>
+      <Position>
+        <Filename Value="project1.lpr"/>
+        <Caret Line="559" Column="29" TopLine="492"/>
+      </Position>
+      <Position>
+        <Filename Value="project1.lpr"/>
+        <Caret Line="347" Column="45" TopLine="336"/>
       </Position>
     </JumpHistory>
     <RunParams>

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CONFIG>
   <Compiler Value="/home/majer/Downloads/fpcupdeluxe/fpc/bin/x86_64-linux/fpc.sh" Date="1774722024"/>
-  <Params Value="-MObjFPC -Scghi -Cg -O1 -gw3 -gl -l -vewnhibq &apos;-Fi/home/majer/Desktop/server schowek2.4/lib/x86_64-linux&apos; &apos;-Fu/home/majer/Desktop/server schowek2.4/&apos; &apos;-FU/home/majer/Desktop/server schowek2.4/lib/x86_64-linux/&apos; &apos;-FE/home/majer/Desktop/server schowek2.4/&apos; &apos;-o/home/majer/Desktop/server schowek2.4/project1&apos; project1.lpr"/>
+  <Params Value="-MObjFPC -Scghi -Cg -O1 -gw3 -gl -l -vewnhibq &apos;-Fi/home/majer/Desktop/server schowek2.5/lib/x86_64-linux&apos; &apos;-Fu/home/majer/Desktop/server schowek2.5/&apos; &apos;-FU/home/majer/Desktop/server schowek2.5/lib/x86_64-linux/&apos; &apos;-FE/home/majer/Desktop/server schowek2.5/&apos; &apos;-o/home/majer/Desktop/server schowek2.5/project1&apos; project1.lpr"/>
 </CONFIG>

@@ -2,16 +2,82 @@ program clipboard_server;
 
 {$mode objfpc}{$H+}
 
+{ ============================================================
+  clipboard_server  Ver. 3  —  endpoint /api/state
+  ============================================================
+  Dodano GET /api/state zwracajacy JSON {author, text}.
+  Pozostale endpointy bez zmian.
+  ============================================================ }
+
+{ ============================================================
+  clipboard_server  Ver. 4  —  Optimistic Locking
+  ============================================================
+  POST /api/push przyjmuje opcjonalny parametr expected_version.
+    expected_version == FVersion → zapisz, zwroc 200
+    expected_version != FVersion → zwroc 409 Conflict
+  Brak expected_version → zapisz bez sprawdzania (kompatybilnosc
+  z www i starymi klientami).
+  Sprawdzenie i zapis w jednej sekcji krytycznej — brak wyścigu
+  między sprawdzeniem a zapisem.
+  ============================================================ }
+
+{ ============================================================
+  clipboard_server  Ver. 5  —  Base64 dla tekstu schowka
+  ============================================================
+
+  Problem z Ver. 4:
+  ─────────────────────────────────────────────────────────────
+  GET /api/state zwracal tekst schowka wewnatrz JSON przez
+  JSONEscape (newline→\n, tab→\t, backslash→\\ itd.).
+  Klient Ver. 4 pytal /api/state, parsowal JSON, ale NIE
+  deSCAPOWAL sekwencji escape — widzial \n jako dwa znaki
+  zamiast jednego. Rozmiary nigdy sie nie zgadzaly przy
+  tekstach z programowania (duzo znakow specjalnych).
+  Efekt: TextLocal != ServerText zawsze → CASE C (czekaj)
+  lub bledne PULL ktore nadpisywalo schowek uzytkownika.
+
+  Rozwiazanie:
+  ─────────────────────────────────────────────────────────────
+  FPull przechowywany jest teraz jako Base64 (klient wysyla
+  Base64 w parametrze data=).
+
+  GET /api/state zwraca pole "text_b64" zamiast "text":
+    {"version":N,"author":"IP","text_b64":"BASE64"}
+  Base64 uzywa tylko znakow A-Za-z0-9+/= — zadnych znakow
+  specjalnych, zadnego JSON-escapingu, zadnych problemow
+  z porownaniem rozmiarow.
+
+  GET /api/pull (legacy) zwraca Base64 jako trzecia linia
+  (zamiast surowego tekstu) — stare klienty przestana
+  dzialac poprawnie, ale /api/pull nie jest juz uzywany.
+
+  POST /api/push z text/plain (www):
+  ─────────────────────────────────────────────────────────────
+  Przegladarka wysyla surowy tekst przez text/plain.
+  Serwer sam koduje go do Base64 przed zapisem do FPull.
+  Dzieki temu FPull ZAWSZE zawiera Base64, niezaleznie
+  od zrodla (klient Pascal lub www).
+
+  Zmiana w kodzie wzgledem Ver. 4:
+  ─────────────────────────────────────────────────────────────
+  + funkcja EncodeBase64(s) — FPC unit base64
+  + w POST /api/push: jesli text/plain → zakoduj do B64
+  + w GET /api/state: zwroc "text_b64" zamiast "text",
+    bez JSONEscape (Base64 nie wymaga escapingu)
+  + JSONEscape pozostaje dla pola "author" (IP, bezpieczne)
+  Wszystko inne identyczne z Ver. 4.
+  ============================================================ }
+
 uses
   {$IFDEF UNIX} cthreads {$ENDIF},
-  Classes, SysUtils, CustApp, fphttpserver, httpdefs, SyncObjs;
+  Classes, SysUtils, CustApp, fphttpserver, httpdefs, SyncObjs, base64;
 
 type
   TMyApplication = class(TCustomApplication)
   private
     FHTTPServer  : TFPHTTPServer;
     FLock        : TCriticalSection;
-    FPull        : string;
+    FPull        : string;   // ZAWSZE przechowywany jako Base64
     FAuthor      : string;
     FVersion     : Int64;
     FExeDir      : string;
@@ -26,6 +92,8 @@ type
   protected
     procedure DoRun; override;
   end;
+
+{ ── Pomocnicze ────────────────────────────────────────────── }
 
 procedure LogMsg(const Msg: string); inline;
 begin
@@ -90,31 +158,60 @@ begin
   end;
 end;
 
-function JSONEscape(const S: string): string;
+// Escape tylko dla krotkich pol (author = IP).
+// Pole text_b64 jest Base64 — nie wymaga zadnego escapingu.
+function JSONEscapeSimple(const S: string): string;
 var
   i: Integer;
 begin
   Result := '';
   for i := 1 to Length(S) do
     case S[i] of
-      '"':  Result := Result + '\"';
-      '\':  Result := Result + '\\';
-      #8:   Result := Result + '\b';
-      #9:   Result := Result + '\t';
-      #10:  Result := Result + '\n';
-      #13:  Result := Result + '\r';
-      #12:  Result := Result + '\f';
+      '"': Result := Result + '\"';
+      '\': Result := Result + '\\';
     else
       Result := Result + S[i];
     end;
 end;
 
+// Koduje surowy tekst do Base64.
+// Wynik zawiera tylko A-Za-z0-9+/= — bezpieczny w JSON i HTTP.
+// FPull zawsze przechowuje Base64 — niezaleznie od zrodla.
+function EncodeBase64Str(const S: string): string;
+var
+  SS  : TStringStream;
+  Enc : TBase64EncodingStream;
+  Out : TStringStream;
+begin
+  Result := '';
+  if S = '' then Exit;
+  SS  := TStringStream.Create(S);
+  Out := TStringStream.Create('');
+  try
+    Enc := TBase64EncodingStream.Create(Out);
+    try
+      Enc.CopyFrom(SS, SS.Size);
+    finally
+      Enc.Free;  // Free wymusza flush bufora
+    end;
+    Result := Out.DataString;
+  finally
+    Out.Free;
+    SS.Free;
+  end;
+end;
+
+{ ── Glowna obsluga zadan ──────────────────────────────────── }
+
 procedure TMyApplication.HandleRequest(Sender: TObject;
   var ARequest : TFPHTTPConnectionRequest;
   var AResponse: TFPHTTPConnectionResponse);
 var
-  InputText      : string;
+  InputData      : string;   // Base64 od klienta Pascal LUB surowy tekst od www
   InputClient    : string;
+  ExpectedVerStr : string;
+  ExpectedVer    : Int64;
+  ShouldUpdate   : Boolean;
   HTMLFile       : string;
   SL             : TStringList;
   RawName        : string;
@@ -126,13 +223,11 @@ var
   BufSize        : Int64;
   RawContent     : string;
   CurAuthor      : string;
-  CurText        : string;
+  CurPull        : string;   // Base64
   CurVersion     : Int64;
-  ExpectedVerStr : string;
-  ExpectedVer    : Int64;
-  ShouldUpdate   : Boolean;
 begin
   try
+    { OPTIONS }
     if ARequest.Method = 'OPTIONS' then
     begin
       AResponse.Code := 204;
@@ -145,7 +240,11 @@ begin
 
     AResponse.CustomHeaders.Values['Access-Control-Allow-Origin'] := '*';
 
-    { POST /api/push }
+    { ── POST /api/push ──────────────────────────────────────
+      Klient Pascal wysyla data= jako Base64.
+      Przegladarka (www) wysyla surowy tekst jako text/plain —
+      serwer sam koduje go do Base64 przed zapisem.
+      FPull zawsze zawiera Base64. }
     if (ARequest.Method = 'POST') and (ARequest.URI = '/api/push') then
     begin
       ExpectedVerStr := '';
@@ -154,17 +253,20 @@ begin
 
       if Pos('text/plain', LowerCase(ARequest.ContentType)) > 0 then
       begin
-        InputText   := ARequest.Content;
+        // Zrodlo: www — surowy tekst, kodujemy do Base64
+        InputData   := EncodeBase64Str(ARequest.Content);
         InputClient := '';
+        // www nie wysyla expected_version — brak optimistic locking
       end
       else
       begin
-        InputText      := ARequest.ContentFields.Values['data'];
+        // Zrodlo: klient Pascal — data= juz jest Base64
+        InputData      := ARequest.ContentFields.Values['data'];
         InputClient    := Trim(ARequest.ContentFields.Values['client']);
         ExpectedVerStr := Trim(ARequest.ContentFields.Values['expected_version']);
       end;
 
-      // Optimistic locking: jedna sekcja krytyczna - sprawdzenie I zapis razem
+      // Sprawdzenie wersji I zapis w jednej sekcji krytycznej
       FLock.Enter;
       try
         if ExpectedVerStr <> '' then
@@ -172,22 +274,22 @@ begin
           ExpectedVer := StrToInt64Def(ExpectedVerStr, -1);
           if ExpectedVer <> FVersion then
           begin
-            // Konflikt wersji - ktos zdazyl przed nami
             ShouldUpdate := False;
-            LogMsg('PUSH CONFLICT: expected=' + ExpectedVerStr +
-                   ', current=' + IntToStr(FVersion));
+            LogMsg('PUSH CONFLICT from=' + InputClient +
+                   ' expected=' + ExpectedVerStr +
+                   ' current='  + IntToStr(FVersion));
           end;
         end;
 
-        if ShouldUpdate and (InputText <> '') then
+        if ShouldUpdate and (InputData <> '') then
         begin
           Inc(FVersion);
-          FPull   := InputText;
+          FPull   := InputData;   // Base64
           FAuthor := InputClient;
           LogMsg('PUSH v' + IntToStr(FVersion) +
-                 ' from=' + InputClient +
+                 ' from='     + InputClient +
                  ' expected=' + ExpectedVerStr +
-                 ' ' + IntToStr(Length(InputText)) + 'B');
+                 ' b64='      + IntToStr(Length(InputData)) + 'B');
           AResponse.Code    := 200;
           AResponse.Content := IntToStr(FVersion);
         end
@@ -199,7 +301,6 @@ begin
         end
         else
         begin
-          // InputText pusty
           AResponse.Code    := 200;
           AResponse.Content := IntToStr(FVersion);
         end;
@@ -211,7 +312,7 @@ begin
       Exit;
     end;
 
-    { GET /api/pull — zachowany dla kompatybilnosci }
+    { ── GET /api/pull — legacy, zwraca Base64 jako trzecia linia ── }
     if (ARequest.Method = 'GET') and (ARequest.URI = '/api/pull') then
     begin
       FLock.Enter;
@@ -225,26 +326,32 @@ begin
       Exit;
     end;
 
-    { GET /api/state — JSON: {"version":N,"author":"...","text":"..."} }
+    { ── GET /api/state — JSON z text_b64 zamiast text ──────
+      Kluczowa zmiana w Ver. 5: pole "text_b64" zawiera Base64.
+      Klient dekoduje Base64 po stronie klienta.
+      Brak JSONEscape dla tekstu — Base64 nie zawiera znakow
+      specjalnych wiec jest bezpieczny w JSON bez escapingu. }
     if (ARequest.Method = 'GET') and (ARequest.URI = '/api/state') then
     begin
       FLock.Enter;
       try
         CurAuthor  := FAuthor;
-        CurText    := FPull;
+        CurPull    := FPull;    // Base64
         CurVersion := FVersion;
       finally
         FLock.Leave;
       end;
       AResponse.Code        := 200;
       AResponse.ContentType := 'application/json; charset=utf-8';
-      AResponse.Content     := '{"version":'  + IntToStr(CurVersion) +
-                               ',"author":"'  + JSONEscape(CurAuthor) +
-                               '","text":"'   + JSONEscape(CurText) + '"}';
+      // text_b64 nie wymaga JSONEscape — Base64 jest bezpieczny w JSON
+      AResponse.Content :=
+        '{"version":'   + IntToStr(CurVersion) +
+        ',"author":"'   + JSONEscapeSimple(CurAuthor) + '"' +
+        ',"text_b64":"' + CurPull + '"}';
       Exit;
     end;
 
-    { POST /api/file }
+    { ── POST /api/file — bez zmian ─────────────────────────── }
     if (ARequest.Method = 'POST') and (ARequest.URI = '/api/file') then
     begin
       RawName  := URIDecode(ARequest.CustomHeaders.Values['X-Filename']);
@@ -305,7 +412,7 @@ begin
       Exit;
     end;
 
-    { GET /api/file }
+    { ── GET /api/file — bez zmian ──────────────────────────── }
     if (ARequest.Method = 'GET') and (ARequest.URI = '/api/file') then
     begin
       FLock.Enter;
@@ -352,7 +459,7 @@ begin
       Exit;
     end;
 
-    { GET /api/fileinfo }
+    { ── GET /api/fileinfo — bez zmian ──────────────────────── }
     if (ARequest.Method = 'GET') and (ARequest.URI = '/api/fileinfo') then
     begin
       FLock.Enter;
@@ -372,7 +479,7 @@ begin
       Exit;
     end;
 
-    { GET / — index.html }
+    { ── GET / — index.html — bez zmian ─────────────────────── }
     if (ARequest.Method = 'GET') and
        ((ARequest.URI = '/') or (ARequest.URI = '')) then
     begin
@@ -431,10 +538,10 @@ begin
 
   ForceDirectories(FExeDir + 'file');
 
-  LogMsg('Clipboard Sync Server -- http://0.0.0.0:' + IntToStr(Port));
-  WriteLn('  POST /api/push     -> wyslij tekst (+ optional expected_version)');
-  WriteLn('  GET  /api/pull     -> odbierz tekst (legacy)');
-  WriteLn('  GET  /api/state    -> JSON {version, author, text}');
+  LogMsg('Clipboard Sync Server Ver.5 -- http://0.0.0.0:' + IntToStr(Port));
+  WriteLn('  POST /api/push     -> wyslij tekst (data=BASE64, opt. expected_version)');
+  WriteLn('  GET  /api/pull     -> legacy (zwraca Base64)');
+  WriteLn('  GET  /api/state    -> JSON {version, author, text_b64}');
   WriteLn('  POST /api/file     -> wgraj plik');
   WriteLn('  GET  /api/file     -> pobierz plik');
   WriteLn('  GET  /api/fileinfo -> polling: nazwa + rozmiar');
@@ -474,4 +581,3 @@ begin
     App.Free;
   end;
 end.
-
