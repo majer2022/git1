@@ -13,6 +13,8 @@ A **lightweight, dependency-minimal** clipboard sync system for local networks (
 ✅ CORS-enabled web UI  
 ✅ `curl`-testable REST API  
 
+
+
 ---
 
 ## ⚙️ Architecture
@@ -23,18 +25,7 @@ A **lightweight, dependency-minimal** clipboard sync system for local networks (
 | **💻 Client** | FreePascal + `xclip` | Local clipboard monitor + HTTP sync client |
 | **🌐 Web UI** | HTML + vanilla JS | Browser-based control & visual feedback |
 
-### 🔁 End-to-End Flow
-```
-[Client A] → (POST /api/push?expected_version=5) → [Server]
-                     ↓
-              [Server: v=6, author=A]
-                     ↓
-[Client B] ← (GET /api/state → JSON) ← [Server]
-                     ↓
-          [Client B] → `xclip -i` → Clipboard
-```
 
----
 
 ## 🔑 Key Features
 
@@ -123,71 +114,158 @@ curl http://192.168.1.204:8080/api/file -o downloaded.txt
 ```
 
 ---
-
 ## 🚀 How to Run
 
-### 🖥️ 1. Start the Server  
-#### Requirements: FreePascal ≥ 3.2
+### 🖥️ 1. Server Setup (Linux)
+
+#### ✅ Requirements:
+- Pre-compiled `project1` binary *(no compiler needed!)*  
+- `index.html` *(required for Web UI)*  
+- `chmod +x` permissions on binaries  
+- Linux with `xclip` installed on clients *(optional)*  
+
+#### 🔑 Grant execution permissions:
+```bash
+# Terminal method
+chmod +x project1 ClipboardSyncLinux
+
+# GUI method (Ubuntu/Debian):
+# • Right-click `project1` → "Properties" → "Permissions" tab
+# • Check ✅ "Allow executing file"
+# • Repeat for `ClipboardSyncLinux`
+```
+
+#### ▶️ Run the server:
+```bash
+# Create a dedicated directory (e.g., on your Proxmox host or VM)
+mkdir -p ~/clipboard_server
+cd ~/clipboard_server
+
+# Copy required files from repo:
+cp /path/to/project1 .         # ← pre-compiled server binary
+cp /path/to/index.html .       # ← Web UI (mandatory!)
+```
 
 ```bash
-# Compile the server (in project root)
-fpc clipboard_server.pas
-
-# Run on port 8080 (or specify -p)
-./clipboard_server -p 8080
+# Start the server
+./project1 -p 8080
 ```
 
-✅ Server starts and listens on `http://0.0.0.0:8080`  
-✅ Creates `./file/` directory for uploads  
-✅ Logs all requests to console
+> ✅ **`./file/` directory is auto-created** on startup (via `ForceDirectories`)  
+> ✅ No manual `mkdir file/` needed  
+> ✅ On success, you’ll see:  
+> ```
+> [14:22:05.123] Clipboard Sync Server Ver.5 -- http://0.0.0.0:8080
+>   POST /api/push     -> send text (data=BASE64, opt. expected_version)
+>   GET  /api/state    -> JSON {version, author, text_b64}
+>   POST /api/file     -> upload file
+>   GET  /             -> ./index.html
+> ```
 
-> 💡 **Tip:** Run in background with `screen` or `nohup`.
+> 💡 **Tip (Proxmox users)**: Run in background with  
+> `nohup ./project1 -p 8080 > clipboard_server.log 2>&1 &`
 
 ---
 
-### 🌐 2. Web UI (Browser)  
-Open in **any device on the LAN**:  
+### 🌐 2. Access via Browser (Web UI)
+
+Open **any device on your LAN** in your browser:  
 ```
-http://<SERVER_IP>:8080
+http://192.168.1.204:8080
 ```
 
-- Real-time clipboard preview  
-- Edit & paste directly in browser  
-- Sync to connected clients  
+- View clipboard content  
+- Edit text directly  
+- Copy between machines  
 - Upload/download files  
+- Real-time sync (polls every second)  
 
-> ✅ Works on Windows, Linux, macOS, Android, iOS.
+> ✅ Works on Windows, Linux, macOS, Android, iOS  
+> ✅ No JavaScript libraries required (vanilla JS)  
+> ⚠️ If `index.html` is missing → `404 Not Found`
 
 ---
 
-### 💻 3. Optional Linux Client (Recommended)  
+### 💻 3. Optional Linux Client (Recommended)
 
-For **full automation** (no manual copying), run the client on *every* Linux machine.
+Useful for **fully automatic clipboard sync** (no browser needed).
 
 #### Requirements:
 ```bash
 sudo apt install xclip
 ```
 
-#### Run client:
+#### Run the client:
 ```bash
-# Compile
-fpc ClipboardSyncLinux.pas
-
-# Start (replace IP/port)
+cp /path/to/ClipboardSyncLinux . && chmod +x ClipboardSyncLinux
 ./ClipboardSyncLinux -a 192.168.1.204 -p 8080 -d
 ```
 
 | Flag | Description |
 |------|-------------|
-| `-a IP` | Server IP address |
+| `-a IP` | Server IP (e.g., `192.168.1.204`) |
 | `-p PORT` | Server port (default: `8080`) |
 | `-d` | Debug mode (verbose logs) |
 | `-h` | Show help |
 
-> 🔁 Client polls server every 1 second  
-> 🔄 Auto-updates local clipboard on server changes  
-> 🧠 Smart conflict resolution: waits before retrying
+> 🔁 Polls server every 1 second  
+> 🔄 Auto-updates local clipboard on changes  
+> 🧠 Smart retry on conflict (waits, then retries)
+
+---
+
+## 🏛️ Virtualization & Proxmox Support
+
+This system is **ideal for virtualization environments** like:
+
+| Environment | How to Use |
+|-------------|------------|
+| **Proxmox VE** | Run `project1` on a Linux VM — clients on other VMs/hardware sync to it |
+| **VMware/VirtualBox** | One VM as server, others as clients |
+| **Docker** | Containerize `project1` (see `Dockerfile` — [request on request](#)) |
+
+### Why it shines in VMs:
+- ✅ No UI dependency — runs headless  
+- ✅ `xclip` works in X11 VMs (even on remote desktops)  
+- ✅ Web UI accessible from host/other VMs/browsers  
+- ✅ One-time setup: start server once, all VMs sync automatically  
+
+#### 📦 Common Proxmox Workflow:
+1. Deploy Ubuntu VM → `apt install xclip`  
+2. Copy `project1` & `index.html` into `/home/user/clipboard_server`  
+3. `chmod +x project1 && ./project1 -p 8080`  
+4. On *other* VMs: `xclip` + client binary syncs to host VM’s clipboard  
+
+Result: **One clipboard, many machines.**
+
+---
+
+### 📝 File Exchange (via Web UI)
+1. Open `http://192.168.1.204:8080` in any browser  
+2. Paste text → syncs to all clients  
+3. Or upload file (via form or `curl`)  
+4. Download file on another machine from same Web UI  
+5. No `xclip` needed for file transfer!  
+
+> ⚠️ File sync requires **active browser tab** — client binaries sync only text.
+
+---
+
+## 📁 Directory Structure (After Start)
+
+```
+~/clipboard_server/
+├── project1              ← pre-compiled server binary (chmod +x)
+├── index.html            ← Web UI (required!)
+├── file/                 ← auto-created on startup (e.g., file/note.txt)
+└── clipboard_server.log  ← only if you use nohup/redirect
+```
+
+> 🔍 Server creates `file/` automatically — no manual `mkdir` needed.  
+> 🔍 `project1` is **not compiled on your machine** — it’s pre-built and ready to run.
+
+
+
 
 ---
 
