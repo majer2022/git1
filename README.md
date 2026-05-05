@@ -68,7 +68,7 @@ Returns current clipboard state as JSON.
 
 #### Test with `curl`:
 ```bash
-curl http://192.168.1.50:8080/api/state | jq .
+curl http://192.168.1.204:8080/api/state | jq .
 # → {"version":42,"author":"192.168.1.100","text_b64":"SGVsbG8gV29ybGQh"}
 ```
 
@@ -86,7 +86,7 @@ Pushes new clipboard text to the server.
 
 #### Test with `curl`:
 ```bash
-curl -X POST http://192.168.1.50:8080/api/push \
+curl -X POST http://192.168.1.204:8080/api/push \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client=192.168.1.101&expected_version=42&data=SGVsbG8gTmV3IQ=="
 
@@ -107,7 +107,7 @@ Uploads a file (metadata via headers).
 
 #### Test with `curl`:
 ```bash
-curl -X POST http://192.168.1.50:8080/api/file \
+curl -X POST http://192.168.1.204:8080/api/file \
   -H "X-Filename: note.txt" \
   -H "X-Filesize: 11" \
   -d "Hello World"
@@ -119,7 +119,7 @@ curl -X POST http://192.168.1.50:8080/api/file \
 Downloads the last-uploaded file.
 
 ```bash
-curl http://192.168.1.50:8080/api/file -o downloaded.txt
+curl http://192.168.1.204:8080/api/file -o downloaded.txt
 ```
 
 ---
@@ -175,7 +175,7 @@ sudo apt install xclip
 fpc ClipboardSyncLinux.pas
 
 # Start (replace IP/port)
-./ClipboardSyncLinux -a 192.168.1.50 -p 8080 -d
+./ClipboardSyncLinux -a 192.168.1.204 -p 8080 -d
 ```
 
 | Flag | Description |
